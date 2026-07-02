@@ -17,7 +17,7 @@ app.use(express.json({ limit: '20mb' }));
 // Tasks (founder side)
 // ---------------------------------------------------------------------------
 app.post('/api/tasks', (req, res) => {
-  const { title, brief, timeLimitMinutes, starterCode, language } = req.body || {};
+  const { title, brief, timeLimitMinutes, starterCode, language, founderEmail } = req.body || {};
   if (!title || !brief) return res.status(400).json({ error: 'title and brief are required' });
   const minutes = Math.min(240, Math.max(5, Number(timeLimitMinutes) || 45));
   const id = crypto.randomUUID();
@@ -28,6 +28,7 @@ app.post('/api/tasks', (req, res) => {
     timeLimitMinutes: minutes,
     starterCode: typeof starterCode === 'string' ? starterCode.slice(0, 100000) : '',
     language: typeof language === 'string' ? language.slice(0, 40) : 'javascript',
+    founderEmail: typeof founderEmail === 'string' ? founderEmail.toLowerCase().slice(0, 256) : '',
     createdAt: new Date().toISOString(),
   };
   save();
@@ -38,6 +39,15 @@ app.get('/api/tasks/:id', (req, res) => {
   const task = tasks[req.params.id];
   if (!task) return res.status(404).json({ error: 'task not found' });
   res.json(task);
+});
+
+app.get('/api/founder/tasks', (req, res) => {
+  const email = (req.query.email || '').toLowerCase().trim();
+  if (!email) return res.status(400).json({ error: 'email query parameter is required' });
+  const list = Object.values(tasks)
+    .filter((t) => t.founderEmail === email)
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  res.json(list);
 });
 
 app.get('/api/tasks/:id/attempts', (req, res) => {

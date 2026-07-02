@@ -20,6 +20,9 @@ export const api = {
 
   getTask: (taskId) => fetch(`/api/tasks/${taskId}`).then(json),
 
+  listFounderTasks: (email) =>
+    fetch(`/api/founder/tasks?email=${encodeURIComponent(email)}`).then(json),
+
   listAttempts: (taskId) => fetch(`/api/tasks/${taskId}/attempts`).then(json),
 
   createAttempt: (taskId, data) =>

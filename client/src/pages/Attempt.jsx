@@ -20,7 +20,6 @@ export default function Attempt() {
   // intro → consent → starting → working → submitting → done
   const [phase, setPhase] = useState('intro');
   const [candidateName, setCandidateName] = useState('');
-  const [webcamOptIn, setWebcamOptIn] = useState(false);
   const [remaining, setRemaining] = useState(null);
 
   const attemptIdRef = useRef(null);
@@ -30,6 +29,7 @@ export default function Attempt() {
   const pendingEventsRef = useRef([]);
   const webcamVideoRef = useRef(null);
   const submittingRef = useRef(false);
+  const tabOutCountRef = useRef(0);
 
   useEffect(() => {
     api.getTask(taskId).then((t) => {
@@ -98,13 +98,28 @@ export default function Attempt() {
     return () => clearInterval(iv);
   }, [phase, flushEvents]);
 
+  // Tab-switch detection: log when candidate leaves or returns to the tab.
+  useEffect(() => {
+    if (phase !== 'working') return;
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        tabOutCountRef.current++;
+        pushEvent({ type: 'tab_out', count: tabOutCountRef.current });
+      } else {
+        pushEvent({ type: 'tab_in', count: tabOutCountRef.current });
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [phase, pushEvent]);
+
   async function handleConsent() {
     setPhase('starting');
     setError(null);
     try {
-      const { id } = await api.createAttempt(taskId, { candidateName, webcamEnabled: webcamOptIn });
+      const { id } = await api.createAttempt(taskId, { candidateName, webcamEnabled: true });
       attemptIdRef.current = id;
-      const session = await startSessionRecording({ attemptId: id, withWebcam: webcamOptIn });
+      const session = await startSessionRecording({ attemptId: id, withWebcam: true });
       sessionRef.current = session;
       session.onScreenShareEnded(() => {
         // Candidate hit the browser's "Stop sharing" — treat as submit.
@@ -118,7 +133,7 @@ export default function Attempt() {
       console.error(e);
       setError(
         e.name === 'NotAllowedError'
-          ? 'Screen recording permission was declined. Screen recording is required for this assessment — click Start again and choose a screen or tab to share.'
+          ? 'Screen recording and webcam permission was declined. Both are required for this assessment.'
           : `Could not start the session: ${e.message}`,
       );
       setPhase('consent');
@@ -207,26 +222,17 @@ export default function Attempt() {
           <h1 className="text-xl font-bold text-slate-900">Before you start: recording consent</h1>
           <div className="mt-4 space-y-3 text-sm text-slate-700">
             <p>
-              This session will <strong>record your screen</strong>{webcamOptIn ? ' and webcam' : ''} for the hiring
+              This session will <strong>record your screen and webcam</strong> for the hiring
               evaluation of the company that sent you this link. Recording starts only after you click
               "I agree — start the assessment" and stops when you submit or time runs out.
             </p>
             <ul className="list-inside list-disc space-y-1">
               <li>You can stop at any time (stopping the screen share submits your attempt).</li>
               <li>The recording is used only for this hiring decision and is automatically deleted after 90 days.</li>
-              <li>Screen recording is required — it is the work being assessed. In the browser prompt you can choose to share just this tab, a window, or your whole screen. Share whatever shows how you work (e.g. include your AI tool).</li>
+              <li>Screen and webcam recording are required — they are part of the assessment. In the browser prompt you can choose to share just this tab, a window, or your whole screen. Share whatever shows how you work (e.g. include your AI tool).</li>
               <li>Close anything personal before you start. Only task-relevant activity is analyzed.</li>
             </ul>
           </div>
-          <label className="mt-4 flex items-start gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={webcamOptIn}
-              onChange={(e) => setWebcamOptIn(e.target.checked)}
-              className="mt-0.5"
-            />
-            <span>Also record my webcam <span className="text-slate-400">(optional — you can leave this off)</span></span>
-          </label>
           {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
           <div className="mt-5 flex gap-3">
             <button
@@ -304,7 +310,7 @@ export default function Attempt() {
         </main>
       </div>
 
-      {webcamOptIn && sessionRef.current?.webcamStream && (
+      {sessionRef.current?.webcamStream && (
         <video
           ref={webcamVideoRef}
           autoPlay

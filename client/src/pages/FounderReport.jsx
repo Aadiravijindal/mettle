@@ -126,6 +126,7 @@ export default function FounderReport() {
                   <div className="flex justify-between"><dt className="text-slate-500">Caught AI mistakes</dt><dd className="font-medium">{report.signals?.caughtAIMistakes ? 'Yes' : 'No'}</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Understood the code</dt><dd className="font-medium">{report.signals?.understoodTheCode}</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Tested own work</dt><dd className="font-medium">{report.signals?.testedOwnWork ? 'Yes' : 'No'}</dd></div>
+                  <div className="flex justify-between"><dt className="text-slate-500">Tab switches away</dt><dd className="font-medium">{report.signals?.tabSwitchCount ?? 0}</dd></div>
                   <div className="flex justify-between"><dt className="text-slate-500">Completed the task</dt><dd className="font-medium">{report.completed ? 'Yes' : 'No'}</dd></div>
                 </dl>
                 <p className="mt-3 text-sm text-slate-600">{report.signals?.problemBreakdown}</p>

@@ -205,6 +205,7 @@ function buildUserContent({ task, attempt, frames, events, finalCode }) {
 function mockReport(events, finalCode) {
   const pasted = events.filter((e) => e.type === 'paste').reduce((n, e) => n + (e.chars || 0), 0);
   const typed = events.filter((e) => e.type === 'typing').reduce((n, e) => n + (e.chars || 0), 0);
+  const tabOuts = events.filter((e) => e.type === 'tab_out').length;
   const total = pasted + typed || 1;
   const aiPct = Math.min(100, Math.round((pasted / total) * 100));
   return {
@@ -219,6 +220,7 @@ function mockReport(events, finalCode) {
       understoodTheCode: 'unclear',
       problemBreakdown: 'unclear — mock analysis',
       testedOwnWork: false,
+      tabSwitchCount: tabOuts,
       redFlags: [],
       greenFlags: [],
     },

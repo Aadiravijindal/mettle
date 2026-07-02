@@ -2,16 +2,6 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../lib/api.js';
 
-const MY_TASKS_KEY = 'mettle.myTasks';
-
-function loadMyTasks() {
-  try {
-    return JSON.parse(localStorage.getItem(MY_TASKS_KEY) || '[]');
-  } catch {
-    return [];
-  }
-}
-
 const DEFAULT_BRIEF = `Our checkout page has a bug: when a discount code is applied and the user then changes the item quantity, the total no longer reflects the discount.
 
 Your task:
@@ -22,6 +12,9 @@ Your task:
 You may use any AI tool, search engine, or documentation you like — we want to see how you actually work.`;
 
 export default function FounderHome() {
+  const [founderEmail, setFounderEmail] = useState('');
+  const [emailSubmitted, setEmailSubmitted] = useState(false);
+  const [loadingTasks, setLoadingTasks] = useState(false);
   const [title, setTitle] = useState('');
   const [brief, setBrief] = useState(DEFAULT_BRIEF);
   const [timeLimit, setTimeLimit] = useState(45);
@@ -29,18 +22,41 @@ export default function FounderHome() {
   const [starterCode, setStarterCode] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState(null);
-  const [myTasks, setMyTasks] = useState(loadMyTasks());
+  const [myTasks, setMyTasks] = useState([]);
+
+  async function handleEmailSubmit(e) {
+    e.preventDefault();
+    if (!founderEmail.trim()) {
+      setError('Email is required');
+      return;
+    }
+    setLoadingTasks(true);
+    setError(null);
+    try {
+      const tasks = await api.listFounderTasks(founderEmail);
+      setMyTasks(tasks);
+      setEmailSubmitted(true);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoadingTasks(false);
+    }
+  }
 
   async function createTask(e) {
     e.preventDefault();
     setCreating(true);
     setError(null);
     try {
-      const task = await api.createTask({ title, brief, timeLimitMinutes: timeLimit, starterCode, language });
-      const entry = { id: task.id, title: task.title, createdAt: task.createdAt };
-      const next = [entry, ...loadMyTasks().filter((t) => t.id !== task.id)];
-      localStorage.setItem(MY_TASKS_KEY, JSON.stringify(next));
-      setMyTasks(next);
+      const task = await api.createTask({
+        title,
+        brief,
+        timeLimitMinutes: timeLimit,
+        starterCode,
+        language,
+        founderEmail,
+      });
+      setMyTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
       setTitle('');
     } catch (err) {
       setError(err.message);
@@ -49,13 +65,69 @@ export default function FounderHome() {
     }
   }
 
+  if (!emailSubmitted) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <header className="border-b bg-white">
+          <div className="mx-auto max-w-4xl px-6 py-4">
+            <h1 className="text-xl font-bold text-slate-900">
+              Mettle <span className="ml-2 text-sm font-normal text-slate-500">AI-fluency hiring assessments</span>
+            </h1>
+          </div>
+        </header>
+
+        <main className="mx-auto max-w-4xl px-6 py-12">
+          <div className="mx-auto max-w-xl rounded-xl border bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Sign in to your account</h2>
+            <p className="mt-2 text-sm text-slate-500">
+              Enter your email to view and create assessment tasks.
+            </p>
+            <form onSubmit={handleEmailSubmit} className="mt-6 space-y-4">
+              <label className="block">
+                <span className="text-sm font-medium text-slate-700">Your email</span>
+                <input
+                  type="email"
+                  required
+                  value={founderEmail}
+                  onChange={(e) => setFounderEmail(e.target.value)}
+                  placeholder="you@company.com"
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </label>
+              {error && <p className="text-sm text-red-600">{error}</p>}
+              <button
+                type="submit"
+                disabled={loadingTasks}
+                className="w-full rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {loadingTasks ? 'Loading…' : 'View your tasks'}
+              </button>
+            </form>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="border-b bg-white">
         <div className="mx-auto max-w-4xl px-6 py-4">
-          <h1 className="text-xl font-bold text-slate-900">
-            Mettle <span className="ml-2 text-sm font-normal text-slate-500">AI-fluency hiring assessments</span>
-          </h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl font-bold text-slate-900">
+              Mettle <span className="ml-2 text-sm font-normal text-slate-500">AI-fluency hiring assessments</span>
+            </h1>
+            <button
+              onClick={() => {
+                setEmailSubmitted(false);
+                setFounderEmail('');
+                setMyTasks([]);
+              }}
+              className="text-sm text-slate-500 hover:text-slate-700"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 
@@ -137,7 +209,7 @@ export default function FounderHome() {
         <section>
           <h2 className="mb-3 text-lg font-semibold text-slate-900">Your tasks</h2>
           {myTasks.length === 0 ? (
-            <p className="text-sm text-slate-500">No tasks yet — create one above. (Tasks are remembered in this browser.)</p>
+            <p className="text-sm text-slate-500">No tasks yet — create one above.</p>
           ) : (
             <ul className="space-y-2">
               {myTasks.map((t) => (

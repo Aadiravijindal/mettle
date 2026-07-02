@@ -48,6 +48,18 @@ export const reportSchema = {
       ],
       additionalProperties: false,
     },
+    integrity: {
+      type: 'object',
+      description: 'Proctoring checks based on the webcam frames and event log',
+      properties: {
+        candidatePresentThroughout: { type: 'boolean', description: 'Candidate visible at the screen in webcam frames throughout the session' },
+        anotherPersonVisible: { type: 'boolean', description: 'Anyone besides the candidate visible in any webcam frame' },
+        lookedAwayFrequently: { type: 'boolean', description: 'Candidate repeatedly looking off-screen (possible second device or notes)' },
+        notes: { type: 'string', description: 'Plain-language integrity observations, including tab/focus violations' },
+      },
+      required: ['candidatePresentThroughout', 'anotherPersonVisible', 'lookedAwayFrequently', 'notes'],
+      additionalProperties: false,
+    },
     completed: { type: 'boolean' },
     summary: { type: 'string' },
     recommendation: {
@@ -55,6 +67,6 @@ export const reportSchema = {
       enum: ['strong_hire', 'hire', 'borderline', 'no_hire'],
     },
   },
-  required: ['aiUsageBreakdown', 'timeline', 'signals', 'completed', 'summary', 'recommendation'],
+  required: ['aiUsageBreakdown', 'timeline', 'signals', 'integrity', 'completed', 'summary', 'recommendation'],
   additionalProperties: false,
 };

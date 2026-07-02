@@ -146,6 +146,34 @@ export default function FounderReport() {
                     </ul>
                   </div>
                 )}
+                {report.integrity && (
+                  <div className="mt-5 border-t pt-4">
+                    <h3 className="mb-2 text-sm font-semibold text-slate-900">Proctoring &amp; integrity</h3>
+                    <dl className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <dt className="text-slate-500">Present throughout</dt>
+                        <dd className={`font-medium ${report.integrity.candidatePresentThroughout ? '' : 'text-red-600'}`}>
+                          {report.integrity.candidatePresentThroughout ? 'Yes' : 'No'}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between">
+                        <dt className="text-slate-500">Someone else visible</dt>
+                        <dd className={`font-medium ${report.integrity.anotherPersonVisible ? 'text-red-600' : ''}`}>
+                          {report.integrity.anotherPersonVisible ? 'Yes' : 'No'}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between">
+                        <dt className="text-slate-500">Frequently looked off-screen</dt>
+                        <dd className={`font-medium ${report.integrity.lookedAwayFrequently ? 'text-amber-600' : ''}`}>
+                          {report.integrity.lookedAwayFrequently ? 'Yes' : 'No'}
+                        </dd>
+                      </div>
+                    </dl>
+                    {report.integrity.notes && (
+                      <p className="mt-2 text-sm text-slate-600">{report.integrity.notes}</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="rounded-xl border bg-white p-6 shadow-sm">
@@ -169,16 +197,34 @@ export default function FounderReport() {
           </>
         )}
 
-        {attempt.hasVideo && (
+        {(attempt.hasVideo || attempt.hasWebcam) && (
           <section className="rounded-xl border bg-white p-6 shadow-sm">
             <h2 className="mb-3 text-lg font-semibold text-slate-900">Session recording</h2>
-            <video
-              ref={videoRef}
-              controls
-              preload="metadata"
-              src={`/api/attempts/${attemptId}/video`}
-              className="w-full rounded-lg bg-black"
-            />
+            <div className={`grid grid-cols-1 gap-4 ${attempt.hasVideo && attempt.hasWebcam ? 'lg:grid-cols-3' : ''}`}>
+              {attempt.hasVideo && (
+                <div className={attempt.hasWebcam ? 'lg:col-span-2' : ''}>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Assessment tab</p>
+                  <video
+                    ref={videoRef}
+                    controls
+                    preload="metadata"
+                    src={`/api/attempts/${attemptId}/video`}
+                    className="w-full rounded-lg bg-black"
+                  />
+                </div>
+              )}
+              {attempt.hasWebcam && (
+                <div>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Webcam (with microphone audio)</p>
+                  <video
+                    controls
+                    preload="metadata"
+                    src={`/api/attempts/${attemptId}/webcam-video`}
+                    className="w-full rounded-lg bg-black"
+                  />
+                </div>
+              )}
+            </div>
           </section>
         )}
       </main>

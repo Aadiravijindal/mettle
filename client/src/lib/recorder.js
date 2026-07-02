@@ -41,27 +41,43 @@ function pickMimeType() {
   return candidates.find((t) => MediaRecorder.isTypeSupported(t)) || '';
 }
 
-export async function startSessionRecording({ attemptId, withWebcam }) {
-  // Screen capture is required — it is the work product being assessed.
-  // preferCurrentTab defaults candidates to sharing just this tab; they can
-  // still choose a window or the full screen from the browser picker.
+export async function startSessionRecording({ attemptId }) {
+  // Capture is locked to THIS tab. preferCurrentTab makes Chrome present a
+  // single "share this tab" confirmation instead of the screen/window picker;
+  // monitorTypeSurfaces/surfaceSwitching remove the remaining escape hatches
+  // on browsers that support them. displaySurface is verified afterwards in
+  // case the browser ignored the hints.
   const screenStream = await navigator.mediaDevices.getDisplayMedia({
-    video: { frameRate: 5 },
+    video: { frameRate: 5, displaySurface: 'browser' },
     audio: false,
-    preferCurrentTab: false,
+    preferCurrentTab: true,
     selfBrowserSurface: 'include',
+    monitorTypeSurfaces: 'exclude',
+    surfaceSwitching: 'exclude',
   });
+  const surface = screenStream.getVideoTracks()[0]?.getSettings().displaySurface;
+  if (surface && surface !== 'browser') {
+    screenStream.getTracks().forEach((t) => t.stop());
+    const err = new Error('You must share this tab — sharing a window or your whole screen is not allowed.');
+    err.name = 'WrongSurfaceError';
+    throw err;
+  }
 
-  let webcamStream = null;
-  if (withWebcam) {
-    try {
-      webcamStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 320, height: 240 },
-        audio: false,
-      });
-    } catch (err) {
-      console.warn('Webcam unavailable, continuing without it:', err);
-    }
+  // Webcam + microphone are mandatory: the camera feed is analyzed for
+  // integrity (candidate present, alone, looking at the screen) and the mic
+  // lets the reviewer hear if someone is coaching off-screen.
+  let webcamStream;
+  try {
+    webcamStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480 },
+      audio: true,
+    });
+  } catch (cause) {
+    screenStream.getTracks().forEach((t) => t.stop());
+    const err = new Error('Camera and microphone access are required for this assessment.');
+    err.name = 'WebcamRequiredError';
+    err.cause = cause;
+    throw err;
   }
 
   const mimeType = pickMimeType();
@@ -73,13 +89,11 @@ export async function startSessionRecording({ attemptId, withWebcam }) {
   screenRecorder.start(CHUNK_MS);
   recorders.push({ recorder: screenRecorder, uploader: screenUploader, mediaStream: screenStream });
 
-  if (webcamStream) {
-    const camUploader = new ChunkUploader(attemptId, 'webcam');
-    const camRecorder = new MediaRecorder(webcamStream, { mimeType, videoBitsPerSecond: 250_000 });
-    camRecorder.ondataavailable = (e) => camUploader.push(e.data);
-    camRecorder.start(CHUNK_MS);
-    recorders.push({ recorder: camRecorder, uploader: camUploader, mediaStream: webcamStream });
-  }
+  const camUploader = new ChunkUploader(attemptId, 'webcam');
+  const camRecorder = new MediaRecorder(webcamStream, { mimeType, videoBitsPerSecond: 400_000 });
+  camRecorder.ondataavailable = (e) => camUploader.push(e.data);
+  camRecorder.start(CHUNK_MS);
+  recorders.push({ recorder: camRecorder, uploader: camUploader, mediaStream: webcamStream });
 
   return {
     screenStream,
@@ -102,6 +116,9 @@ export async function startSessionRecording({ attemptId, withWebcam }) {
     },
     onScreenShareEnded(cb) {
       screenStream.getVideoTracks()[0]?.addEventListener('ended', cb);
+    },
+    onWebcamEnded(cb) {
+      webcamStream.getVideoTracks()[0]?.addEventListener('ended', cb);
     },
   };
 }

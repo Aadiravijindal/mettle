@@ -12,6 +12,8 @@ const execFileAsync = promisify(execFile);
 const MODEL = process.env.ANALYSIS_MODEL || 'claude-opus-4-8';
 const FRAME_INTERVAL_SECONDS = Number(process.env.FRAME_INTERVAL_SECONDS || 8);
 const MAX_FRAMES = Number(process.env.MAX_FRAMES || 40);
+const WEBCAM_FRAME_INTERVAL_SECONDS = Number(process.env.WEBCAM_FRAME_INTERVAL_SECONDS || 20);
+const MAX_WEBCAM_FRAMES = Number(process.env.MAX_WEBCAM_FRAMES || 15);
 
 async function resolveFfmpeg() {
   if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH;
@@ -73,27 +75,32 @@ async function drain() {
 
 // MediaRecorder webm files lack duration/seek metadata; remuxing writes it so
 // the founder's video player can seek. Also gives ffprobe-able duration.
+// Covers both the tab recording and the webcam recording.
 export async function remuxRecording(dir) {
-  const src = path.join(dir, 'recording.webm');
-  const dst = path.join(dir, 'recording-fixed.webm');
-  if (!fs.existsSync(src)) return null;
   const ffmpeg = await resolveFfmpeg();
-  try {
-    await execFileAsync(ffmpeg, ['-y', '-i', src, '-c', 'copy', dst], { timeout: 120_000 });
-    return dst;
-  } catch (err) {
-    console.error('Remux failed (will serve raw recording):', err.message);
-    return null;
+  const results = [];
+  for (const [srcName, dstName] of [
+    ['recording.webm', 'recording-fixed.webm'],
+    ['webcam.webm', 'webcam-fixed.webm'],
+  ]) {
+    const src = path.join(dir, srcName);
+    if (!fs.existsSync(src)) continue;
+    const dst = path.join(dir, dstName);
+    try {
+      await execFileAsync(ffmpeg, ['-y', '-i', src, '-c', 'copy', dst], { timeout: 120_000 });
+      results.push(dst);
+    } catch (err) {
+      console.error(`Remux failed for ${srcName} (will serve raw recording):`, err.message);
+    }
   }
+  return results;
 }
 
-async function extractFrames(dir) {
-  const video = ['recording-fixed.webm', 'recording.webm']
-    .map((f) => path.join(dir, f))
-    .find((f) => fs.existsSync(f));
+async function extractFramesFrom(dir, { sources, framesSubdir, intervalSeconds, maxFrames, maxWidth }) {
+  const video = sources.map((f) => path.join(dir, f)).find((f) => fs.existsSync(f));
   if (!video) return [];
 
-  const framesDir = path.join(dir, 'frames');
+  const framesDir = path.join(dir, framesSubdir);
   fs.rmSync(framesDir, { recursive: true, force: true });
   fs.mkdirSync(framesDir, { recursive: true });
 
@@ -102,7 +109,7 @@ async function extractFrames(dir) {
     ffmpeg,
     [
       '-y', '-i', video,
-      '-vf', `fps=1/${FRAME_INTERVAL_SECONDS},scale='min(1280,iw)':-2`,
+      '-vf', `fps=1/${intervalSeconds},scale='min(${maxWidth},iw)':-2`,
       '-q:v', '6',
       path.join(framesDir, 'frame_%05d.jpg'),
     ],
@@ -113,14 +120,32 @@ async function extractFrames(dir) {
   // Frame N (1-indexed) is sampled around (N-1) * interval seconds.
   let frames = files.map((f, i) => ({
     file: path.join(framesDir, f),
-    seconds: i * FRAME_INTERVAL_SECONDS,
+    seconds: i * intervalSeconds,
   }));
-  if (frames.length > MAX_FRAMES) {
-    const step = frames.length / MAX_FRAMES;
-    frames = Array.from({ length: MAX_FRAMES }, (_, i) => frames[Math.floor(i * step)]);
+  if (frames.length > maxFrames) {
+    const step = frames.length / maxFrames;
+    frames = Array.from({ length: maxFrames }, (_, i) => frames[Math.floor(i * step)]);
   }
   return frames;
 }
+
+const extractScreenFrames = (dir) =>
+  extractFramesFrom(dir, {
+    sources: ['recording-fixed.webm', 'recording.webm'],
+    framesSubdir: 'frames',
+    intervalSeconds: FRAME_INTERVAL_SECONDS,
+    maxFrames: MAX_FRAMES,
+    maxWidth: 1280,
+  });
+
+const extractWebcamFrames = (dir) =>
+  extractFramesFrom(dir, {
+    sources: ['webcam-fixed.webm', 'webcam.webm'],
+    framesSubdir: 'webcam-frames',
+    intervalSeconds: WEBCAM_FRAME_INTERVAL_SECONDS,
+    maxFrames: MAX_WEBCAM_FRAMES,
+    maxWidth: 640,
+  });
 
 function formatClock(totalSeconds) {
   const s = Math.max(0, Math.round(totalSeconds));
@@ -150,15 +175,23 @@ function formatEventLog(events) {
   return events
     .map((e) => {
       const t = formatClock((e.t ?? 0) / 1000);
-      if (e.type === 'paste') return `${t} PASTE ${e.chars} chars`;
+      if (e.type === 'paste') {
+        const snippet = e.snippet ? `\n    pasted content begins: ${JSON.stringify(e.snippet)}` : '';
+        return `${t} PASTE ${e.chars} chars${snippet}`;
+      }
       if (e.type === 'typing') return `${t} typed ~${e.chars} chars`;
       if (e.type === 'delete') return `${t} deleted ~${e.chars} chars`;
+      if (e.type === 'tab_out') return `${t} LEFT THE TAB (violation ${e.violation ?? '?'} of 3)`;
+      if (e.type === 'tab_in') return `${t} returned to the tab`;
+      if (e.type === 'focus_lost') return `${t} FOCUS MOVED TO ANOTHER WINDOW (violation ${e.violation ?? '?'} of 3)`;
+      if (e.type === 'focus_gained') return `${t} focus returned to the tab`;
+      if (e.type === 'ended_by_lockdown') return `${t} SESSION AUTO-SUBMITTED: too many tab/focus violations`;
       return `${t} ${e.type}`;
     })
     .join('\n');
 }
 
-function buildUserContent({ task, attempt, frames, events, finalCode }) {
+function buildUserContent({ task, attempt, frames, webcamFrames, events, finalCode }) {
   const content = [];
   content.push({
     type: 'text',
@@ -191,6 +224,24 @@ function buildUserContent({ task, attempt, frames, events, finalCode }) {
     });
   }
 
+  for (const frame of webcamFrames) {
+    content.push({ type: 'text', text: `WEBCAM (candidate-facing camera) at ${formatClock(frame.seconds)}:` });
+    content.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: 'image/jpeg',
+        data: fs.readFileSync(frame.file).toString('base64'),
+      },
+    });
+  }
+  if (webcamFrames.length === 0) {
+    content.push({
+      type: 'text',
+      text: '(No webcam frames are available for this session — note in the integrity section that webcam-based checks could not be performed.)',
+    });
+  }
+
   content.push({
     type: 'text',
     text: `EDITOR EVENT LOG (timestamps from session start):\n${formatEventLog(events)}`,
@@ -205,7 +256,7 @@ function buildUserContent({ task, attempt, frames, events, finalCode }) {
 function mockReport(events, finalCode) {
   const pasted = events.filter((e) => e.type === 'paste').reduce((n, e) => n + (e.chars || 0), 0);
   const typed = events.filter((e) => e.type === 'typing').reduce((n, e) => n + (e.chars || 0), 0);
-  const tabOuts = events.filter((e) => e.type === 'tab_out').length;
+  const tabOuts = events.filter((e) => e.type === 'tab_out' || e.type === 'focus_lost').length;
   const total = pasted + typed || 1;
   const aiPct = Math.min(100, Math.round((pasted / total) * 100));
   return {
@@ -223,6 +274,12 @@ function mockReport(events, finalCode) {
       tabSwitchCount: tabOuts,
       redFlags: [],
       greenFlags: [],
+    },
+    integrity: {
+      candidatePresentThroughout: true,
+      anotherPersonVisible: false,
+      lookedAwayFrequently: false,
+      notes: 'Mock analysis — webcam frames were not reviewed.',
     },
     completed: Boolean(finalCode && finalCode.trim()),
     summary: 'This is a mock report generated without calling the Claude API (set ANTHROPIC_API_KEY and unset MOCK_ANALYSIS for a real analysis).',
@@ -253,9 +310,15 @@ async function analyzeAttempt(attemptId) {
     }
     let frames = [];
     try {
-      frames = await extractFrames(dir);
+      frames = await extractScreenFrames(dir);
     } catch (err) {
       console.error('Frame extraction failed, analyzing without screenshots:', err.message);
+    }
+    let webcamFrames = [];
+    try {
+      webcamFrames = await extractWebcamFrames(dir);
+    } catch (err) {
+      console.error('Webcam frame extraction failed, analyzing without webcam:', err.message);
     }
 
     const client = new Anthropic();
@@ -265,7 +328,7 @@ async function analyzeAttempt(attemptId) {
       thinking: { type: 'adaptive' },
       system: ANALYSIS_SYSTEM_PROMPT,
       output_config: { format: { type: 'json_schema', schema: reportSchema } },
-      messages: [{ role: 'user', content: buildUserContent({ task, attempt, frames, events, finalCode }) }],
+      messages: [{ role: 'user', content: buildUserContent({ task, attempt, frames, webcamFrames, events, finalCode }) }],
     });
     const message = await stream.finalMessage();
     if (message.stop_reason === 'refusal') {

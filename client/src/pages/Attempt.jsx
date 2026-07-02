@@ -6,6 +6,7 @@ import { api } from '../lib/api.js';
 import { startSessionRecording } from '../lib/recorder.js';
 
 const EVENT_FLUSH_MS = 15_000;
+const MAX_VIOLATIONS = 3; // tab-outs / focus losses before the attempt auto-submits
 
 function formatCountdown(seconds) {
   const s = Math.max(0, seconds);
@@ -21,6 +22,7 @@ export default function Attempt() {
   const [phase, setPhase] = useState('intro');
   const [candidateName, setCandidateName] = useState('');
   const [remaining, setRemaining] = useState(null);
+  const [violations, setViolations] = useState(0);
 
   const attemptIdRef = useRef(null);
   const sessionRef = useRef(null); // recorder handle
@@ -29,7 +31,7 @@ export default function Attempt() {
   const pendingEventsRef = useRef([]);
   const webcamVideoRef = useRef(null);
   const submittingRef = useRef(false);
-  const tabOutCountRef = useRef(0);
+  const violationsRef = useRef(0);
 
   useEffect(() => {
     api.getTask(taskId).then((t) => {
@@ -59,7 +61,13 @@ export default function Attempt() {
     if (submittingRef.current) return;
     submittingRef.current = true;
     setPhase('submitting');
-    pushEvent({ type: reason === 'timeout' ? 'time_expired' : 'submitted' });
+    const endEvent =
+      reason === 'timeout' ? 'time_expired'
+      : reason === 'lockdown' ? 'ended_by_lockdown'
+      : reason === 'screen_share_ended' ? 'screen_share_ended'
+      : reason === 'webcam_ended' ? 'webcam_ended'
+      : 'submitted';
+    pushEvent({ type: endEvent });
     try {
       // Stop recording first so the final chunk is flushed and uploaded.
       await sessionRef.current?.stop();
@@ -98,20 +106,42 @@ export default function Attempt() {
     return () => clearInterval(iv);
   }, [phase, flushEvents]);
 
-  // Tab-switch detection: log when candidate leaves or returns to the tab.
+  // Lockdown: the assessment must stay in this tab. Leaving the tab or
+  // switching focus to another window is a violation; MAX_VIOLATIONS
+  // auto-submits the attempt. Every violation is logged for the analysis.
   useEffect(() => {
     if (phase !== 'working') return;
-    function handleVisibilityChange() {
-      if (document.hidden) {
-        tabOutCountRef.current++;
-        pushEvent({ type: 'tab_out', count: tabOutCountRef.current });
-      } else {
-        pushEvent({ type: 'tab_in', count: tabOutCountRef.current });
+    function violation(type) {
+      if (submittingRef.current) return;
+      violationsRef.current += 1;
+      setViolations(violationsRef.current);
+      pushEvent({ type, violation: violationsRef.current });
+      if (violationsRef.current >= MAX_VIOLATIONS) {
+        handleSubmit('lockdown');
       }
     }
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [phase, pushEvent]);
+    function onVisibilityChange() {
+      if (document.hidden) violation('tab_out');
+      else pushEvent({ type: 'tab_in' });
+    }
+    function onBlur() {
+      // Tab switches already fire visibilitychange; blur alone means focus
+      // moved to another window (second monitor, other app) with the tab
+      // still visible.
+      if (!document.hidden) violation('focus_lost');
+    }
+    function onFocus() {
+      if (!document.hidden) pushEvent({ type: 'focus_gained' });
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [phase, pushEvent, handleSubmit]);
 
   async function handleConsent() {
     setPhase('starting');
@@ -119,11 +149,15 @@ export default function Attempt() {
     try {
       const { id } = await api.createAttempt(taskId, { candidateName, webcamEnabled: true });
       attemptIdRef.current = id;
-      const session = await startSessionRecording({ attemptId: id, withWebcam: true });
+      const session = await startSessionRecording({ attemptId: id });
       sessionRef.current = session;
       session.onScreenShareEnded(() => {
         // Candidate hit the browser's "Stop sharing" — treat as submit.
         if (!submittingRef.current) handleSubmit('screen_share_ended');
+      });
+      session.onWebcamEnded(() => {
+        // Camera turned off mid-session — recording is mandatory, so submit.
+        if (!submittingRef.current) handleSubmit('webcam_ended');
       });
       startedAtRef.current = Date.now();
       setRemaining(task.timeLimitMinutes * 60);
@@ -133,24 +167,34 @@ export default function Attempt() {
       console.error(e);
       setError(
         e.name === 'NotAllowedError'
-          ? 'Screen recording and webcam permission was declined. Both are required for this assessment.'
-          : `Could not start the session: ${e.message}`,
+          ? 'Recording permission was declined. Tab recording, camera, and microphone are all required — click Start again and allow them.'
+          : e.name === 'WrongSurfaceError' || e.name === 'WebcamRequiredError'
+            ? e.message
+            : `Could not start the session: ${e.message}`,
       );
       setPhase('consent');
     }
   }
 
-  // Attach webcam preview once working.
+  // Attach the live webcam preview once working.
   useEffect(() => {
-    if (phase === 'working' && webcamVideoRef.current && sessionRef.current?.webcamStream) {
-      webcamVideoRef.current.srcObject = sessionRef.current.webcamStream;
+    if (phase !== 'working') return;
+    const video = webcamVideoRef.current;
+    const stream = sessionRef.current?.webcamStream;
+    if (video && stream && video.srcObject !== stream) {
+      video.srcObject = stream;
+      video.play().catch(() => {}); // autoplay policies; muted so this succeeds
     }
   }, [phase]);
 
   function handleEditorMount(editor) {
     editor.onDidPaste((e) => {
-      const chars = editor.getModel()?.getValueLengthInRange(e.range) ?? 0;
-      pushEvent({ type: 'paste', chars });
+      const model = editor.getModel();
+      const chars = model?.getValueLengthInRange(e.range) ?? 0;
+      // A snippet of what was pasted lets the analysis compare pasted content
+      // against the final submission (how much survived unedited).
+      const snippet = (model?.getValueInRange(e.range) ?? '').slice(0, 400);
+      pushEvent({ type: 'paste', chars, snippet });
     });
     let typedSinceFlush = 0;
     editor.onDidChangeModelContent((e) => {
@@ -189,7 +233,9 @@ export default function Attempt() {
             <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Hiring assessment</p>
             <h1 className="mt-1 text-2xl font-bold text-slate-900">{task.title}</h1>
             <p className="mt-2 text-sm text-slate-500">
-              Time limit: <strong>{task.timeLimitMinutes} minutes</strong> · You may use any AI tool, search engine, or documentation — that's the point.
+              Time limit: <strong>{task.timeLimitMinutes} minutes</strong> · This is a proctored session: it runs
+              locked to this tab with your camera and microphone recording. Leaving the tab is tracked, and
+              leaving it {MAX_VIOLATIONS} times ends your attempt.
             </p>
             <pre className="mt-4 whitespace-pre-wrap rounded-lg bg-slate-50 p-4 text-sm text-slate-700">{task.brief}</pre>
           </div>
@@ -222,15 +268,16 @@ export default function Attempt() {
           <h1 className="text-xl font-bold text-slate-900">Before you start: recording consent</h1>
           <div className="mt-4 space-y-3 text-sm text-slate-700">
             <p>
-              This session will <strong>record your screen and webcam</strong> for the hiring
-              evaluation of the company that sent you this link. Recording starts only after you click
-              "I agree — start the assessment" and stops when you submit or time runs out.
+              This session will <strong>record this browser tab, your camera, and your microphone</strong> for
+              the hiring evaluation of the company that sent you this link. Recording starts only after you
+              click "I agree — start the assessment" and stops when you submit or time runs out.
             </p>
             <ul className="list-inside list-disc space-y-1">
-              <li>You can stop at any time (stopping the screen share submits your attempt).</li>
-              <li>The recording is used only for this hiring decision and is automatically deleted after 90 days.</li>
-              <li>Screen and webcam recording are required — they are part of the assessment. In the browser prompt you can choose to share just this tab, a window, or your whole screen. Share whatever shows how you work (e.g. include your AI tool).</li>
-              <li>Close anything personal before you start. Only task-relevant activity is analyzed.</li>
+              <li><strong>Only this tab is shared</strong> — the browser will ask you to confirm sharing this tab. There is no option to share other windows or your screen, and nothing outside this tab is recorded.</li>
+              <li><strong>Camera and microphone are required.</strong> The camera feed is reviewed to confirm you are present, alone, and working at the screen.</li>
+              <li><strong>Stay on this tab.</strong> Switching to another tab or window is logged as a violation; {MAX_VIOLATIONS} violations end your attempt automatically.</li>
+              <li>You can stop at any time (stopping the share or camera submits your attempt as-is).</li>
+              <li>The recordings are used only for this hiring decision and are automatically deleted after 90 days.</li>
             </ul>
           </div>
           {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
@@ -270,6 +317,13 @@ export default function Attempt() {
   const low = remaining !== null && remaining <= 300;
   return (
     <div className="flex h-screen flex-col bg-slate-900">
+      {violations > 0 && (
+        <div className="bg-red-600 px-4 py-1.5 text-center text-sm font-semibold text-white">
+          Warning {violations}/{MAX_VIOLATIONS}: stay on this tab. Leaving it{' '}
+          {MAX_VIOLATIONS - violations === 1 ? 'one more time' : `${MAX_VIOLATIONS - violations} more times`} will
+          end your attempt automatically.
+        </div>
+      )}
       <header className="flex items-center justify-between border-b border-slate-700 bg-slate-800 px-4 py-2">
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 text-xs font-medium text-red-400">
@@ -295,7 +349,8 @@ export default function Attempt() {
           <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Brief</h2>
           <pre className="mt-2 whitespace-pre-wrap text-sm text-slate-200">{task.brief}</pre>
           <p className="mt-4 text-xs text-slate-500">
-            Use anything you like — ChatGPT, Claude, Google, docs. Your screen is being recorded so we can see how you work.
+            This tab, your camera, and your microphone are being recorded. Stay on this tab — leaving it counts
+            as a violation and {MAX_VIOLATIONS} violations end the attempt.
           </p>
         </aside>
         <main className="min-w-0 flex-1">
@@ -310,15 +365,14 @@ export default function Attempt() {
         </main>
       </div>
 
-      {sessionRef.current?.webcamStream && (
-        <video
-          ref={webcamVideoRef}
-          autoPlay
-          muted
-          playsInline
-          className="fixed bottom-4 right-4 h-24 w-32 rounded-lg border border-slate-600 object-cover shadow-lg"
-        />
-      )}
+      <video
+        ref={webcamVideoRef}
+        autoPlay
+        muted
+        playsInline
+        className="fixed bottom-4 left-4 z-10 h-28 w-40 rounded-lg border-2 border-red-500/70 bg-black object-cover shadow-lg"
+        title="Your camera is recording"
+      />
     </div>
   );
 }

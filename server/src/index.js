@@ -147,19 +147,26 @@ app.get('/api/attempts/:id', (req, res) => {
   const hasVideo = ['recording-fixed.webm', 'recording.webm'].some((f) =>
     fs.existsSync(path.join(attemptDir(attempt.id), f)),
   );
-  res.json({ ...attempt, taskTitle: task?.title, taskId: attempt.taskId, report, hasVideo });
+  const hasWebcam = ['webcam-fixed.webm', 'webcam.webm'].some((f) =>
+    fs.existsSync(path.join(attemptDir(attempt.id), f)),
+  );
+  res.json({ ...attempt, taskTitle: task?.title, taskId: attempt.taskId, report, hasVideo, hasWebcam });
 });
 
-app.get('/api/attempts/:id/video', (req, res) => {
+function sendRecording(req, res, candidates) {
   const attempt = attempts[req.params.id];
   if (!attempt) return res.status(404).json({ error: 'attempt not found' });
   const dir = attemptDir(attempt.id);
-  const file = ['recording-fixed.webm', 'recording.webm']
-    .map((f) => path.join(dir, f))
-    .find((f) => fs.existsSync(f));
+  const file = candidates.map((f) => path.join(dir, f)).find((f) => fs.existsSync(f));
   if (!file) return res.status(404).json({ error: 'no recording' });
   res.sendFile(file, { headers: { 'Content-Type': 'video/webm' } });
-});
+}
+
+app.get('/api/attempts/:id/video', (req, res) =>
+  sendRecording(req, res, ['recording-fixed.webm', 'recording.webm']));
+
+app.get('/api/attempts/:id/webcam-video', (req, res) =>
+  sendRecording(req, res, ['webcam-fixed.webm', 'webcam.webm']));
 
 // ---------------------------------------------------------------------------
 // Retention: recordings are deleted after RETENTION_DAYS; reports are kept.
@@ -169,7 +176,7 @@ function retentionSweep() {
   for (const attempt of Object.values(attempts)) {
     if (!attempt.submittedAt || new Date(attempt.submittedAt).getTime() > cutoff) continue;
     const dir = path.join(UPLOADS_DIR, attempt.id);
-    for (const f of ['recording.webm', 'recording-fixed.webm', 'webcam.webm']) {
+    for (const f of ['recording.webm', 'recording-fixed.webm', 'webcam.webm', 'webcam-fixed.webm']) {
       const p = path.join(dir, f);
       if (fs.existsSync(p)) {
         fs.rmSync(p);
@@ -177,6 +184,7 @@ function retentionSweep() {
       }
     }
     fs.rmSync(path.join(dir, 'frames'), { recursive: true, force: true });
+    fs.rmSync(path.join(dir, 'webcam-frames'), { recursive: true, force: true });
   }
 }
 

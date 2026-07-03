@@ -11,7 +11,8 @@
     "dev": "concurrently -n server,client -c blue,green \"npm run dev -w server\" \"npm run dev -w client\"",
     "build": "npm run build -w client",
     "start": "npm run start -w server",
-    "test": "node server/test/scoring-stress.mjs"
+    "test": "node server/test/scoring-stress.mjs",
+    "test:fairness": "node server/test/fairness-probe.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

@@ -245,7 +245,7 @@ function formatEventLog(events) {
     .join('\n');
 }
 
-function buildUserContent({ task, attempt, frames, webcamFrames, audio, events, finalCode }) {
+export function buildUserContent({ task, attempt, frames, webcamFrames, audio, events, finalCode }) {
   const content = [];
   content.push({
     type: 'text',

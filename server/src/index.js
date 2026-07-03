@@ -63,7 +63,9 @@ app.get('/api/tasks/:id/attempts', (req, res) => {
         try {
           const r = JSON.parse(fs.readFileSync(path.join(attemptDir(id), 'report.json'), 'utf8'));
           row.summary = {
+            score: r.scoring?.score,
             recommendation: r.recommendation,
+            pendingReview: r.scoring?.pendingReview || false,
             completion: r.completion?.verdict,
             percentOwnWork: r.toolUsage?.percentOwnWork,
             thinkingRating: r.thinking?.rating,

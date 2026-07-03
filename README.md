@@ -91,6 +91,37 @@ create a task, copy the shareable link, open it in another browser as the
    throughout, anyone else visible, looking off-screen), tab-switch count,
    clickable session timeline, and both recordings (tab + webcam with audio).
 
+## The decision algorithm
+
+The hire verdict is **not an AI opinion**. Claude is the perception layer only —
+it reports timestamped observations (requirements met, tested or not, caught an
+AI mistake or not, tool-use intents, integrity flags). A deterministic engine
+(`server/src/scoring.js`) turns those into the verdict, and the report page
+shows the whole calculation.
+
+**Composite score (0–100)** = weighted layer scores:
+
+| Layer | Weight | Scored from |
+|---|---|---|
+| Task completion | 35% | pass/partial/fail, requirements met / total, works correctly, code quality 0-10 |
+| Depth of thinking | 30% | fixed +/− rules over evidenced signals (caught AI mistake +18, tested own work +15, modified AI output +12, broke problem down +10, explained reasoning +10, prompts improved +8; pasted verbatim −20, no understanding −25, output diverged −12, identical prompts −8) |
+| Tool use | 20% | purposeful uses (+6 each, max 5), thinking-avoidant uses (−12 each), healthy own/AI mix +10, finished well under time +10 |
+| Integrity | 15% | −15/face flag, −10/voice flag, −20/focus escape, −25 unrecorded activity |
+
+**Bands:** ≥80 strong hire · ≥62 hire · ≥42 borderline · <42 no hire.
+
+**Hard gates** (can only lower the band, never raise it):
+- Empty submission or task failed → **no hire**
+- ≥80% AI output with no evidence of understanding → **no hire**
+- Partial completion → capped at **hire**
+- Any integrity flag → capped at **borderline, pending human review** — a
+  flagged session is never auto-rejected; the founder watches the flagged
+  moments and decides.
+
+Same observations always produce the same verdict; every triggered rule is
+listed on the report. Candidates on a task are ranked by score in a sortable
+comparison table.
+
 ## Consent & privacy
 
 - Nothing records until the candidate explicitly agrees on the consent screen.

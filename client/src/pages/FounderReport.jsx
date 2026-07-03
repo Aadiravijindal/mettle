@@ -152,7 +152,57 @@ export default function FounderReport() {
             </section>
             <section className="rounded-xl border bg-white px-6 py-4 shadow-sm">
               <p className="text-slate-800">{report.oneLineSummary}</p>
+              {report.scoring?.pendingReview && (
+                <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+                  ⚠ Capped at borderline pending your review — this session has integrity flags (Layer 2). Watch the
+                  flagged moments and decide; the score below shows where they'd land if the session is clean.
+                </p>
+              )}
             </section>
+
+            {/* ── How the verdict was computed (the algorithm, transparent) ── */}
+            {report.scoring && (
+              <Section
+                title={`How the verdict was computed — score ${report.scoring.score}/100`}
+                subtitle="Deterministic: the AI only reports observations; this fixed formula turns them into the verdict. Same evidence always gives the same result."
+              >
+                <div className="space-y-3">
+                  {Object.entries(report.scoring.layers).map(([key, layer]) => (
+                    <div key={key}>
+                      <div className="mb-1 flex items-baseline justify-between text-sm">
+                        <span className="font-medium capitalize text-slate-700">
+                          {key === 'toolUse' ? 'Tool use' : key} <span className="text-xs text-slate-400">× {Math.round(layer.weight * 100)}%</span>
+                        </span>
+                        <span className="font-mono text-slate-700">{layer.score}/100</span>
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={`h-full rounded-full ${layer.score >= 70 ? 'bg-emerald-500' : layer.score >= 40 ? 'bg-amber-400' : 'bg-red-400'}`}
+                          style={{ width: `${layer.score}%` }}
+                        />
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">{layer.parts.join(' · ')}</p>
+                    </div>
+                  ))}
+                </div>
+                {report.scoring.gates?.length > 0 && (
+                  <div className="mt-4 border-t pt-3">
+                    <p className="text-xs font-semibold uppercase text-slate-400">Rules triggered</p>
+                    <ul className="mt-1 space-y-1 text-sm text-slate-700">
+                      {report.scoring.gates.map((g, i) => (
+                        <li key={i}>
+                          <span className="font-medium">caps at {g.cap.replace('_', ' ')}:</span> {g.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <p className="mt-4 border-t pt-3 text-xs text-slate-400">
+                  Bands: ≥80 strong hire · ≥62 hire · ≥42 borderline · below 42 no hire. Gates can only lower the
+                  band, never raise it.
+                </p>
+              </Section>
+            )}
 
             {/* ── LAYER 1 — did they complete the task ─────────────── */}
             <Section title="1 · Task completion">

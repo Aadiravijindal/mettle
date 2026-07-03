@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { attempts, tasks, save, attemptDir } from './store.js';
 import { ANALYSIS_SYSTEM_PROMPT } from './prompt.js';
 import { reportSchema } from './reportSchema.js';
+import { computeScoring, thinkingRatingFromScore } from './scoring.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -336,9 +337,12 @@ function mockReport(events, finalCode, audio) {
   return {
     oneLineSummary:
       'MOCK REPORT (no LLM call was made) — set ANTHROPIC_API_KEY and unset MOCK_ANALYSIS for a real analysis.',
-    recommendation: 'borderline',
     completion: {
       verdict: finalCode && finalCode.trim() ? 'partial' : 'fail',
+      requirementsTotal: 0,
+      requirementsMet: 0,
+      worksCorrectly: false,
+      codeQuality: 5,
       required: 'Mock analysis — the brief was not evaluated.',
       delivered: finalCode && finalCode.trim() ? 'A non-empty submission was received.' : 'Empty submission.',
       reasoning: 'Mock analysis cannot judge requirements.',
@@ -351,6 +355,7 @@ function mockReport(events, finalCode, audio) {
       windowBehavior: {
         tabSwitches,
         focusViolations: violations,
+        unrecordedActivity: violations > 0,
         note: `Event log: ${tabSwitches} in-window tab switch(es), ${violations} focus escape(s). Frames not reviewed in mock mode.`,
       },
       notes: 'Mock analysis — webcam frames were not reviewed. Audio segments (if any) come from the real microphone scan.',
@@ -370,9 +375,21 @@ function mockReport(events, finalCode, audio) {
         at: formatClock((e.t ?? 0) / 1000),
         tool: 'Unknown source',
         purpose: `Pasted ${e.chars} characters into the editor.`,
+        intent: 'accelerate',
       })),
     thinking: {
-      rating: 'medium',
+      signals: {
+        modifiedAiOutputBeforeUse: false,
+        caughtAiMistake: false,
+        testedOwnWork: false,
+        brokeProblemDown: false,
+        promptsImproved: false,
+        explainedReasoning: false,
+        pastedVerbatimNoTesting: false,
+        noEvidenceOfUnderstanding: false,
+        repeatedIdenticalPrompts: false,
+        outputDiverged: false,
+      },
       greenFlags: [],
       redFlags: [],
       evidence: 'Mock analysis — frames were not reviewed, so no thinking-depth evidence is available.',
@@ -432,6 +449,18 @@ async function analyzeAttempt(attemptId) {
     const text = message.content.find((b) => b.type === 'text')?.text;
     if (!text) throw new Error(`No text in analysis response (stop_reason: ${message.stop_reason})`);
     report = JSON.parse(text);
+  }
+
+  // The verdict is computed HERE, deterministically, from the observations —
+  // never taken from the model. See scoring.js for the weights and gates.
+  report.scoring = computeScoring(report, {
+    durationSeconds: attempt.durationSeconds || 0,
+    timeLimitMinutes: task.timeLimitMinutes,
+    finalCodeEmpty: !finalCode.trim(),
+  });
+  report.recommendation = report.scoring.recommendation;
+  if (report.thinking) {
+    report.thinking.rating = thinkingRatingFromScore(report.scoring.layers.thinking.score);
   }
 
   // Attach session metadata the founder page needs alongside the LLM output.

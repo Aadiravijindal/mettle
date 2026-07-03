@@ -20,6 +20,7 @@ const RATING_RANK = { high: 0, medium: 1, low: 2 };
 
 const COLUMNS = [
   { key: 'name', label: 'Candidate' },
+  { key: 'score', label: 'Score' },
   { key: 'verdict', label: 'Verdict' },
   { key: 'completion', label: 'Completed' },
   { key: 'ownWork', label: 'Own work' },
@@ -33,6 +34,7 @@ function sortValue(a, key) {
   const s = a.summary;
   switch (key) {
     case 'name': return (a.candidateName || '').toLowerCase();
+    case 'score': return s?.score != null ? -s.score : 999;
     case 'verdict': return s ? REC_RANK[s.recommendation] ?? 9 : 99;
     case 'completion': return s ? { pass: 0, partial: 1, fail: 2 }[s.completion] ?? 9 : 99;
     case 'ownWork': return s?.percentOwnWork != null ? -s.percentOwnWork : 999;
@@ -57,7 +59,7 @@ export default function FounderTask() {
   const [attempts, setAttempts] = useState([]);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
-  const [sortKey, setSortKey] = useState('verdict');
+  const [sortKey, setSortKey] = useState('score');
 
   const shareUrl = `${window.location.origin}/attempt/${taskId}`;
 
@@ -135,7 +137,8 @@ export default function FounderTask() {
         <section>
           <h2 className="mb-1 text-lg font-semibold text-slate-900">Candidates</h2>
           <p className="mb-3 text-xs text-slate-400">
-            Click a column to sort, click a row for the full layered report. Refreshes automatically.
+            Ranked by score. Click a column to sort, click a row for the full layered report. * = verdict capped
+            pending integrity review. Refreshes automatically.
           </p>
           {attempts.length === 0 ? (
             <p className="text-sm text-slate-500">No attempts yet. This list refreshes automatically.</p>
@@ -169,10 +172,13 @@ export default function FounderTask() {
                           <span className="font-medium text-slate-800">{a.candidateName || 'Anonymous'}</span>
                           <span className="ml-2 block text-xs text-slate-400 sm:ml-0">{new Date(a.createdAt).toLocaleString()}</span>
                         </td>
+                        <td className="px-4 py-3 font-mono font-bold text-slate-800">
+                          {s?.score != null ? s.score : '—'}
+                        </td>
                         <td className="px-4 py-3">
                           {s?.recommendation ? (
                             <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${REC_STYLES[s.recommendation] || 'bg-slate-100'}`}>
-                              {s.recommendation.replace('_', ' ')}
+                              {s.recommendation.replace('_', ' ')}{s.pendingReview ? ' *' : ''}
                             </span>
                           ) : '—'}
                         </td>

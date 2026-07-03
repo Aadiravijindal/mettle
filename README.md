@@ -103,24 +103,40 @@ shows the whole calculation.
 
 | Layer | Weight | Scored from |
 |---|---|---|
-| Task completion | 35% | pass/partial/fail, requirements met / total, works correctly, code quality 0-10 |
-| Depth of thinking | 30% | fixed +/− rules over evidenced signals (caught AI mistake +18, tested own work +15, modified AI output +12, broke problem down +10, explained reasoning +10, prompts improved +8; pasted verbatim −20, no understanding −25, output diverged −12, identical prompts −8) |
-| Tool use | 20% | purposeful uses (+6 each, max 5), thinking-avoidant uses (−12 each), healthy own/AI mix +10, finished well under time +10 |
-| Integrity | 15% | −15/face flag, −10/voice flag, −20/focus escape, −25 unrecorded activity |
+| Task completion | 35% | pass/partial/fail base, requirements met / total, works correctly ±8, code quality ×4 (−20..+20 — quality keeps separating candidates at the top; a mediocre complete submission can't max this layer) |
+| Depth of thinking | 30% | fixed +/− rules over evidenced signals (caught AI mistake +18, tested own work +15, modified AI output +12, verified before submit +12, broke problem down +10, explained reasoning +10, prompts improved +8; pasted verbatim unverified −20, no understanding −25, output diverged −12, identical prompts −8). **Silent-mastery floor:** a correct, clean (quality ≥7), ≥85%-own-work solution floors this layer at 85 — an expert who just knows the answer is not punished for not narrating. |
+| Tool use | 20% | purposeful uses (+6 each, max 5), thinking-avoidant uses (−12 each, capped at −36 so a rocky start can't bury a visible recovery), healthy own/AI mix +10, finished well under time +10 |
+| Integrity | 15% | −15/face flag, −10/voice flag, −20/focus escape, −25 unrecorded activity; restored to 100 when the founder reviews and clears the flags |
 
 **Bands:** ≥80 strong hire · ≥62 hire · ≥42 borderline · <42 no hire.
 
 **Hard gates** (can only lower the band, never raise it):
 - Empty submission or task failed → **no hire**
-- ≥80% AI output with no evidence of understanding → **no hire**
-- Partial completion → capped at **hire**
-- Any integrity flag → capped at **borderline, pending human review** — a
-  flagged session is never auto-rejected; the founder watches the flagged
-  moments and decides.
+- ≥80% AI output with **neither editing nor verification** → **no hire**
+  ("didn't edit it" is not "didn't understand it" — visibly running/reading/
+  testing the pasted code counts as understanding)
+- Partial completion → capped at **hire** — *unless* it was a deliberate,
+  explicitly communicated scope cut with the rest delivered polished
+  (triage is judgment, not failure)
+- Requirements ticked but implementation brittle/minimal (quality ≤3) →
+  capped at **borderline** (the rules-lawyer guard)
+- Any integrity flag → capped at **borderline, pending human review** — never
+  auto-rejected. The founder clicks the flagged timestamps, watches the
+  moments, and resolves in one click: **clear** lifts the cap and restores
+  the integrity score; **confirm** caps at no hire.
+
+Fairness is a hard rule in the observation prompt: thinking is judged by
+technical substance, never by English fluency or verbosity; short blunt
+prompts that work are effective tool use; unrecognized tools are described
+neutrally, never treated as suspicious.
 
 Same observations always produce the same verdict; every triggered rule is
 listed on the report. Candidates on a task are ranked by score in a sortable
-comparison table.
+comparison table. The judgment itself is regression-tested against 10
+real-world edge cases (`npm test` → `server/test/scoring-stress.mjs`): the
+fast quiet expert, the slow learner who recovers, the verified copy-paster,
+the one loud paste, the false integrity flag, the rules-lawyer, the unknown
+tool, the strategic skipper, and more.
 
 ## Consent & privacy
 

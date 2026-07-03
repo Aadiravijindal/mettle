@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { tasks, attempts, save, attemptDir, UPLOADS_DIR } from './store.js';
 import { enqueueAnalysis, recoverPendingJobs, remuxRecording } from './analysis.js';
+import { computeScoring } from './scoring.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4000);
@@ -177,6 +178,44 @@ function sendRecording(req, res, candidates) {
   if (!file) return res.status(404).json({ error: 'no recording' });
   res.sendFile(file, { headers: { 'Content-Type': 'video/webm' } });
 }
+
+// Founder resolves the integrity flags after watching the flagged moments:
+// 'cleared' lifts the borderline cap and restores the integrity score;
+// 'confirmed' caps the verdict at no_hire. The scoring is recomputed and the
+// stored report updated, so the comparison table reflects the decision.
+app.post('/api/attempts/:id/integrity-review', (req, res) => {
+  const attempt = attempts[req.params.id];
+  if (!attempt) return res.status(404).json({ error: 'attempt not found' });
+  if (attempt.status !== 'complete') return res.status(409).json({ error: 'attempt has no completed report yet' });
+  const decision = req.body?.decision;
+  if (!['cleared', 'confirmed'].includes(decision)) {
+    return res.status(400).json({ error: 'decision must be "cleared" or "confirmed"' });
+  }
+  const dir = attemptDir(attempt.id);
+  const reportPath = path.join(dir, 'report.json');
+  if (!fs.existsSync(reportPath)) return res.status(404).json({ error: 'report not found' });
+  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  const task = tasks[attempt.taskId];
+
+  attempt.integrityReview = {
+    decision,
+    note: String(req.body?.note || '').slice(0, 2000),
+    at: new Date().toISOString(),
+  };
+  const finalCodePath = path.join(dir, 'final-code.txt');
+  const finalCode = fs.existsSync(finalCodePath) ? fs.readFileSync(finalCodePath, 'utf8') : '';
+  report.scoring = computeScoring(report, {
+    durationSeconds: attempt.durationSeconds || 0,
+    timeLimitMinutes: task?.timeLimitMinutes,
+    finalCodeEmpty: !finalCode.trim(),
+    integrityReview: decision,
+  });
+  report.recommendation = report.scoring.recommendation;
+  report.integrityReview = attempt.integrityReview;
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
+  save();
+  res.json({ ok: true, recommendation: report.recommendation, score: report.scoring.score });
+});
 
 app.get('/api/attempts/:id/video', (req, res) =>
   sendRecording(req, res, ['recording-fixed.webm', 'recording.webm']));

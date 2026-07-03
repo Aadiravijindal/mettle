@@ -54,4 +54,11 @@ export const api = {
     }).then(json),
 
   getAttempt: (attemptId) => fetch(`/api/attempts/${attemptId}`).then(json),
+
+  reviewIntegrity: (attemptId, decision, note = '') =>
+    fetch(`/api/attempts/${attemptId}/integrity-review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision, note }),
+    }).then(json),
 };

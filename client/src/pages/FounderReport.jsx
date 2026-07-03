@@ -95,6 +95,17 @@ export default function FounderReport() {
 
   const integrity = report?.integrity;
   const flagged = integrity?.status === 'flagged';
+  const review = report?.integrityReview;
+
+  async function resolveIntegrity(decision) {
+    try {
+      await api.reviewIntegrity(attemptId, decision);
+      const data = await api.getAttempt(attemptId);
+      setAttempt(data);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -154,8 +165,15 @@ export default function FounderReport() {
               <p className="text-slate-800">{report.oneLineSummary}</p>
               {report.scoring?.pendingReview && (
                 <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
-                  ⚠ Capped at borderline pending your review — this session has integrity flags (Layer 2). Watch the
-                  flagged moments and decide; the score below shows where they'd land if the session is clean.
+                  ⚠ Capped at borderline pending your review — this session has integrity flags (Layer 2). Click the
+                  timestamps there, watch the moments, and resolve with one click; the verdict updates instantly.
+                </p>
+              )}
+              {review && (
+                <p className={`mt-2 rounded-lg px-3 py-2 text-sm font-medium ${review.decision === 'cleared' ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}>
+                  {review.decision === 'cleared'
+                    ? `✓ You reviewed the flagged moments and cleared them (${new Date(review.at).toLocaleString()}) — cap lifted.`
+                    : `✗ You reviewed the flagged moments and confirmed the concern (${new Date(review.at).toLocaleString()}).`}
                 </p>
               )}
             </section>
@@ -270,6 +288,27 @@ export default function FounderReport() {
                 </div>
               </dl>
               {integrity?.notes && <p className="mt-4 border-t pt-3 text-sm text-slate-600">{integrity.notes}</p>}
+              {flagged && !review && (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-sm font-medium text-amber-900">
+                    Watched the flagged moments? Resolve them — the verdict recalculates immediately:
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <button
+                      onClick={() => resolveIntegrity('cleared')}
+                      className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+                    >
+                      ✓ It's fine — clear the flags
+                    </button>
+                    <button
+                      onClick={() => resolveIntegrity('confirmed')}
+                      className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                    >
+                      ✗ Confirm the concern
+                    </button>
+                  </div>
+                </div>
+              )}
             </Section>
 
             {/* ── LAYER 3 — what tools, how much ───────────────────── */}

@@ -341,6 +341,7 @@ function mockReport(events, finalCode, audio) {
       verdict: finalCode && finalCode.trim() ? 'partial' : 'fail',
       requirementsTotal: 0,
       requirementsMet: 0,
+      deliberateScopeCut: false,
       worksCorrectly: false,
       codeQuality: 5,
       required: 'Mock analysis — the brief was not evaluated.',
@@ -382,6 +383,7 @@ function mockReport(events, finalCode, audio) {
         modifiedAiOutputBeforeUse: false,
         caughtAiMistake: false,
         testedOwnWork: false,
+        verifiedBeforeSubmit: false,
         brokeProblemDown: false,
         promptsImproved: false,
         explainedReasoning: false,
@@ -457,6 +459,7 @@ async function analyzeAttempt(attemptId) {
     durationSeconds: attempt.durationSeconds || 0,
     timeLimitMinutes: task.timeLimitMinutes,
     finalCodeEmpty: !finalCode.trim(),
+    integrityReview: attempt.integrityReview?.decision || null,
   });
   report.recommendation = report.scoring.recommendation;
   if (report.thinking) {

@@ -41,25 +41,80 @@ function pickMimeType() {
   return candidates.find((t) => MediaRecorder.isTypeSupported(t)) || '';
 }
 
+// Proves the shared window is the one hosting this page: flash a solid
+// magenta overlay over the page and check the color shows up in the captured
+// frames. A different window (or a window on another screen) will never show
+// the overlay. Fails open on environments where frames can't be sampled —
+// the analysis still sees the frames and flags a wrong window.
+const VERIFY_COLOR = { r: 255, g: 0, b: 255 };
+
+async function verifySharedWindowShowsThisPage(stream) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText =
+    `position:fixed;inset:0;z-index:2147483647;background:rgb(${VERIFY_COLOR.r},${VERIFY_COLOR.g},${VERIFY_COLOR.b})`;
+  document.body.appendChild(overlay);
+  const video = document.createElement('video');
+  video.muted = true;
+  video.playsInline = true;
+  video.srcObject = stream;
+  try {
+    await video.play();
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 90;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    // Poll a few frames: capture pipelines take a moment to deliver a frame
+    // that includes the overlay.
+    for (let i = 0; i < 12; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      if (video.videoWidth === 0) continue;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // Sample the central region — skips the window's tab strip / title bar.
+      const { data } = ctx.getImageData(32, 27, 96, 54);
+      let r = 0, g = 0, b = 0;
+      const px = data.length / 4;
+      for (let p = 0; p < data.length; p += 4) {
+        r += data[p]; g += data[p + 1]; b += data[p + 2];
+      }
+      r /= px; g /= px; b /= px;
+      const dist = Math.abs(r - VERIFY_COLOR.r) + Math.abs(g - VERIFY_COLOR.g) + Math.abs(b - VERIFY_COLOR.b);
+      if (dist < 180) return true;
+    }
+    return false;
+  } catch (err) {
+    console.warn('window verification unavailable, continuing:', err);
+    return true;
+  } finally {
+    overlay.remove();
+    video.srcObject = null;
+  }
+}
+
 export async function startSessionRecording({ attemptId }) {
-  // Capture is locked to THIS tab. preferCurrentTab makes Chrome present a
-  // single "share this tab" confirmation instead of the screen/window picker;
-  // monitorTypeSurfaces/surfaceSwitching remove the remaining escape hatches
-  // on browsers that support them. displaySurface is verified afterwards in
-  // case the browser ignored the hints.
+  // Capture the entire browser WINDOW hosting the assessment — every tab the
+  // candidate opens in it (AI tools, docs, search) is part of the recording.
+  // monitorTypeSurfaces removes the "Entire screen" option; the surface type
+  // and the specific window are verified after the picker.
   const screenStream = await navigator.mediaDevices.getDisplayMedia({
-    video: { frameRate: 5, displaySurface: 'browser' },
+    video: { frameRate: 5, displaySurface: 'window' },
     audio: false,
-    preferCurrentTab: true,
+    preferCurrentTab: false,
     selfBrowserSurface: 'include',
     monitorTypeSurfaces: 'exclude',
     surfaceSwitching: 'exclude',
   });
   const surface = screenStream.getVideoTracks()[0]?.getSettings().displaySurface;
-  if (surface && surface !== 'browser') {
+  if (surface && surface !== 'window') {
     screenStream.getTracks().forEach((t) => t.stop());
-    const err = new Error('You must share this tab — sharing a window or your whole screen is not allowed.');
+    const err = new Error('You must share this browser window — pick it under "Window" in the prompt (not a tab, not your entire screen).');
     err.name = 'WrongSurfaceError';
+    throw err;
+  }
+  const isThisWindow = await verifySharedWindowShowsThisPage(screenStream);
+  if (!isThisWindow) {
+    screenStream.getTracks().forEach((t) => t.stop());
+    const err = new Error("The window you shared doesn't appear to be this one. Share the browser window that contains this assessment page.");
+    err.name = 'WrongWindowError';
     throw err;
   }
 

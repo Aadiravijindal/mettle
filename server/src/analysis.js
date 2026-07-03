@@ -181,11 +181,11 @@ function formatEventLog(events) {
       }
       if (e.type === 'typing') return `${t} typed ~${e.chars} chars`;
       if (e.type === 'delete') return `${t} deleted ~${e.chars} chars`;
-      if (e.type === 'tab_out') return `${t} LEFT THE TAB (violation ${e.violation ?? '?'} of 3)`;
-      if (e.type === 'tab_in') return `${t} returned to the tab`;
-      if (e.type === 'focus_lost') return `${t} FOCUS MOVED TO ANOTHER WINDOW (violation ${e.violation ?? '?'} of 3)`;
-      if (e.type === 'focus_gained') return `${t} focus returned to the tab`;
-      if (e.type === 'ended_by_lockdown') return `${t} SESSION AUTO-SUBMITTED: too many tab/focus violations`;
+      if (e.type === 'left_assessment_tab') return `${t} switched to another tab in the recorded window (that tab's content is visible in the window frames)`;
+      if (e.type === 'returned_to_assessment_tab') return `${t} returned to the assessment tab`;
+      if (e.type === 'focus_left_window') return `${t} FOCUS LEFT THE RECORDED WINDOW — unrecorded activity (violation ${e.violation ?? '?'} of 3)`;
+      if (e.type === 'focus_gained') return `${t} focus returned to the assessment`;
+      if (e.type === 'ended_by_lockdown') return `${t} SESSION AUTO-SUBMITTED: too many focus violations`;
       return `${t} ${e.type}`;
     })
     .join('\n');
@@ -256,7 +256,7 @@ function buildUserContent({ task, attempt, frames, webcamFrames, events, finalCo
 function mockReport(events, finalCode) {
   const pasted = events.filter((e) => e.type === 'paste').reduce((n, e) => n + (e.chars || 0), 0);
   const typed = events.filter((e) => e.type === 'typing').reduce((n, e) => n + (e.chars || 0), 0);
-  const tabOuts = events.filter((e) => e.type === 'tab_out' || e.type === 'focus_lost').length;
+  const tabOuts = events.filter((e) => e.type === 'left_assessment_tab' || e.type === 'focus_left_window').length;
   const total = pasted + typed || 1;
   const aiPct = Math.min(100, Math.round((pasted / total) * 100));
   return {

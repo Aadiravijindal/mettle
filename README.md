@@ -1,20 +1,24 @@
 # Mettle — AI-Fluency Hiring Assessment (MVP)
 
 Send a candidate one real task with a time limit. They work in a **proctored,
-tab-locked** in-browser editor: the assessment tab, their webcam, and their
-microphone are recorded, every paste and tab-switch is logged, and leaving the
-tab three times ends the attempt. Afterwards an async analysis job samples
-frames from both recordings, combines them with the editor's event log and the
-final submission, and asks Claude for an evidence-based report: how much was
-AI-generated vs their own work, a session timeline, integrity checks (present,
-alone, looking at the screen), red/green flags, and a hire recommendation.
+window-locked** browser session: their entire browser window (every tab in it —
+AI tools included), their webcam, and their microphone are recorded. The share
+is verified to be the right window, every paste and tab-switch is logged, and
+moving focus to another window or app three times ends the attempt. Afterwards
+an async analysis job samples frames from both recordings, combines them with
+the editor's event log and the final submission, and asks Claude for an
+evidence-based report: how much was AI-generated vs their own work (including
+what they actually asked the AI, visible in the frames), a session timeline,
+integrity checks (present, alone, looking at the screen, no unrecorded
+off-window work), red/green flags, and a hire recommendation.
 
 ## Stack
 
 - **Client** — React + Vite + Tailwind, Monaco editor, `getDisplayMedia`
-  (locked to the current tab via `preferCurrentTab`) + `getUserMedia`
-  (camera + mic, mandatory) + `MediaRecorder` with chunked upload every 30s
-  (a crash doesn't lose the session).
+  (window surface required; a color-flash check verifies the shared window is
+  the one hosting the assessment) + `getUserMedia` (camera + mic, mandatory) +
+  `MediaRecorder` with chunked upload every 30s (a crash doesn't lose the
+  session).
 - **Server** — Node + Express, JSON-file storage under `server/data/`, in-process
   analysis queue.
 - **Analysis** — `ffmpeg` frame sampling of the tab recording (1 frame / 8s, ≤40
@@ -59,11 +63,14 @@ create a task, copy the shareable link, open it in another browser as the
    optional starter code) → get an unguessable shareable link. Tasks are stored
    server-side under your email; no password auth in the MVP.
 2. **Candidate** (`/attempt/:taskId`): sees the brief → explicit consent screen →
-   the browser confirms sharing **this tab only** (no screen/window options) and
-   requests the **camera + microphone (both required)** → Monaco workspace with
-   a countdown timer and a live webcam preview (bottom-left). Chunks upload
-   every 30s; pastes (with a content snippet), typing, and every tab/focus
-   switch are logged. **Three tab/focus violations auto-submit the attempt.**
+   shares **this browser window** (surface type and the specific window are
+   verified — a tab, another window, or the full screen is rejected) and grants
+   the **camera + microphone (both required)** → Monaco workspace with a
+   countdown timer and a live webcam preview (bottom-left). They may open AI
+   tools/search/docs in other tabs of that window — it's all recorded. Chunks
+   upload every 30s; pastes (with a content snippet), typing, and every
+   tab/focus switch are logged. **Moving focus outside the recorded window
+   three times auto-submits the attempt.**
 3. **Submit** (or timer expiry, stopping the share/camera, or lockdown):
    recordings stop, final code uploads, the analysis job runs.
 4. **Founder** (`/founder/attempts/:id`): report with recommendation, AI-usage
@@ -74,8 +81,9 @@ create a task, copy the shareable link, open it in another browser as the
 ## Consent & privacy
 
 - Nothing records until the candidate explicitly agrees on the consent screen.
-- Only the assessment tab is captured — never the rest of the screen. Camera
-  and microphone are mandatory and stated plainly before the session starts.
+- Only the assessment browser window is captured — never the rest of the
+  screen or other windows. Camera and microphone are mandatory and stated
+  plainly before the session starts.
 - Recordings auto-delete after `RETENTION_DAYS` (default 90); reports are kept.
 - The analysis prompt is scoped to task-relevant activity and the specific
   integrity checks — incidental personal content in the capture is explicitly
@@ -86,5 +94,6 @@ create a task, copy the shareable link, open it in another browser as the
 No auth system, no ATS integrations, no desktop app, no live analysis, no mobile,
 one (coding) task type. Storage is local disk — swap `server/data/` for S3 later.
 A browser cannot truly lock down the candidate's machine (a second device is
-always possible) — the webcam integrity checks and tab-switch log are the
+always possible) — the webcam integrity checks, focus-violation strikes, and
+the analysis-time correlation of away-periods against window frames are the
 mitigation, not a guarantee.

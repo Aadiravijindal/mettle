@@ -6,7 +6,7 @@ import { api } from '../lib/api.js';
 import { startSessionRecording } from '../lib/recorder.js';
 
 const EVENT_FLUSH_MS = 15_000;
-const MAX_VIOLATIONS = 3; // tab-outs / focus losses before the attempt auto-submits
+const MAX_VIOLATIONS = 3; // focus escapes from the shared window before the attempt auto-submits
 
 function formatCountdown(seconds) {
   const s = Math.max(0, seconds);
@@ -106,11 +106,15 @@ export default function Attempt() {
     return () => clearInterval(iv);
   }, [phase, flushEvents]);
 
-  // Lockdown: the assessment must stay in this tab. Leaving the tab or
-  // switching focus to another window is a violation; MAX_VIOLATIONS
-  // auto-submits the attempt. Every violation is logged for the analysis.
+  // Lockdown: the whole browser window is recorded, so switching TABS inside
+  // it is allowed (and on video) — but moving focus to another window or app
+  // is a violation; MAX_VIOLATIONS auto-submits. blur fires before
+  // visibilitychange on an in-window tab switch, so the blur handler waits a
+  // beat: if the document is hidden by then it was a tab switch (logged,
+  // allowed); if it's still visible, focus escaped the shared window.
   useEffect(() => {
     if (phase !== 'working') return;
+    let blurTimer = null;
     function violation(type) {
       if (submittingRef.current) return;
       violationsRef.current += 1;
@@ -121,22 +125,24 @@ export default function Attempt() {
       }
     }
     function onVisibilityChange() {
-      if (document.hidden) violation('tab_out');
-      else pushEvent({ type: 'tab_in' });
+      if (document.hidden) pushEvent({ type: 'left_assessment_tab' });
+      else pushEvent({ type: 'returned_to_assessment_tab' });
     }
     function onBlur() {
-      // Tab switches already fire visibilitychange; blur alone means focus
-      // moved to another window (second monitor, other app) with the tab
-      // still visible.
-      if (!document.hidden) violation('focus_lost');
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(() => {
+        if (!document.hidden) violation('focus_left_window');
+      }, 300);
     }
     function onFocus() {
-      if (!document.hidden) pushEvent({ type: 'focus_gained' });
+      clearTimeout(blurTimer);
+      pushEvent({ type: 'focus_gained' });
     }
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('blur', onBlur);
     window.addEventListener('focus', onFocus);
     return () => {
+      clearTimeout(blurTimer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('blur', onBlur);
       window.removeEventListener('focus', onFocus);
@@ -233,9 +239,11 @@ export default function Attempt() {
             <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Hiring assessment</p>
             <h1 className="mt-1 text-2xl font-bold text-slate-900">{task.title}</h1>
             <p className="mt-2 text-sm text-slate-500">
-              Time limit: <strong>{task.timeLimitMinutes} minutes</strong> · This is a proctored session: it runs
-              locked to this tab with your camera and microphone recording. Leaving the tab is tracked, and
-              leaving it {MAX_VIOLATIONS} times ends your attempt.
+              Time limit: <strong>{task.timeLimitMinutes} minutes</strong> · This is a proctored session: this
+              entire browser window, your camera, and your microphone are recorded. You may use any AI tool,
+              search engine, or docs <strong>in other tabs of this window</strong> — it's all part of the
+              recording. Switching to another window or app is a violation; {MAX_VIOLATIONS} violations end
+              your attempt.
             </p>
             <pre className="mt-4 whitespace-pre-wrap rounded-lg bg-slate-50 p-4 text-sm text-slate-700">{task.brief}</pre>
           </div>
@@ -268,14 +276,15 @@ export default function Attempt() {
           <h1 className="text-xl font-bold text-slate-900">Before you start: recording consent</h1>
           <div className="mt-4 space-y-3 text-sm text-slate-700">
             <p>
-              This session will <strong>record this browser tab, your camera, and your microphone</strong> for
+              This session will <strong>record this entire browser window, your camera, and your microphone</strong> for
               the hiring evaluation of the company that sent you this link. Recording starts only after you
               click "I agree — start the assessment" and stops when you submit or time runs out.
             </p>
             <ul className="list-inside list-disc space-y-1">
-              <li><strong>Only this tab is shared</strong> — the browser will ask you to confirm sharing this tab. There is no option to share other windows or your screen, and nothing outside this tab is recorded.</li>
+              <li><strong>Share this browser window.</strong> In the prompt, pick this window under "Window". We verify it's the right one — sharing a different window won't start the session. Nothing outside this window is recorded.</li>
+              <li><strong>You may open other tabs in this window</strong> — ChatGPT, Claude, Google, docs — that's expected, and it's all part of the recording.</li>
+              <li><strong>Stay in this window.</strong> Switching to another window or app is logged as a violation; {MAX_VIOLATIONS} violations end your attempt automatically.</li>
               <li><strong>Camera and microphone are required.</strong> The camera feed is reviewed to confirm you are present, alone, and working at the screen.</li>
-              <li><strong>Stay on this tab.</strong> Switching to another tab or window is logged as a violation; {MAX_VIOLATIONS} violations end your attempt automatically.</li>
               <li>You can stop at any time (stopping the share or camera submits your attempt as-is).</li>
               <li>The recordings are used only for this hiring decision and are automatically deleted after 90 days.</li>
             </ul>
@@ -319,7 +328,7 @@ export default function Attempt() {
     <div className="flex h-screen flex-col bg-slate-900">
       {violations > 0 && (
         <div className="bg-red-600 px-4 py-1.5 text-center text-sm font-semibold text-white">
-          Warning {violations}/{MAX_VIOLATIONS}: stay on this tab. Leaving it{' '}
+          Warning {violations}/{MAX_VIOLATIONS}: stay in this browser window. Switching away{' '}
           {MAX_VIOLATIONS - violations === 1 ? 'one more time' : `${MAX_VIOLATIONS - violations} more times`} will
           end your attempt automatically.
         </div>
@@ -349,8 +358,9 @@ export default function Attempt() {
           <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Brief</h2>
           <pre className="mt-2 whitespace-pre-wrap text-sm text-slate-200">{task.brief}</pre>
           <p className="mt-4 text-xs text-slate-500">
-            This tab, your camera, and your microphone are being recorded. Stay on this tab — leaving it counts
-            as a violation and {MAX_VIOLATIONS} violations end the attempt.
+            This whole browser window, your camera, and your microphone are being recorded. Feel free to open
+            ChatGPT, Claude, Google, or docs in other tabs of this window — that's expected. Switching to
+            another window or app counts as a violation, and {MAX_VIOLATIONS} violations end the attempt.
           </p>
         </aside>
         <main className="min-w-0 flex-1">

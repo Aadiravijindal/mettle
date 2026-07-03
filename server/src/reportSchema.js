@@ -33,7 +33,7 @@ export const reportSchema = {
         understoodTheCode: { type: 'string', enum: ['high', 'medium', 'low', 'unclear'] },
         problemBreakdown: { type: 'string' },
         testedOwnWork: { type: 'boolean' },
-        tabSwitchCount: { type: 'integer', description: 'Number of times candidate switched away from the tab' },
+        tabSwitchCount: { type: 'integer', description: 'Tab switches inside the recorded window plus focus escapes from it' },
         redFlags: { type: 'array', items: { type: 'string' } },
         greenFlags: { type: 'array', items: { type: 'string' } },
       },

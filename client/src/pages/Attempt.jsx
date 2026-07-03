@@ -284,7 +284,7 @@ export default function Attempt() {
               <li><strong>Share this browser window.</strong> In the prompt, pick this window under "Window". We verify it's the right one — sharing a different window won't start the session. Nothing outside this window is recorded.</li>
               <li><strong>You may open other tabs in this window</strong> — ChatGPT, Claude, Google, docs — that's expected, and it's all part of the recording.</li>
               <li><strong>Stay in this window.</strong> Switching to another window or app is logged as a violation; {MAX_VIOLATIONS} violations end your attempt automatically.</li>
-              <li><strong>Camera and microphone are required.</strong> The camera feed is reviewed to confirm you are present, alone, and working at the screen.</li>
+              <li><strong>Camera and microphone are required.</strong> The camera feed is reviewed to confirm you are present, alone, and working at the screen; the microphone is scanned for voices. Take the assessment alone, in a quiet room — talking or another person in the room will be flagged for review.</li>
               <li>You can stop at any time (stopping the share or camera submits your attempt as-is).</li>
               <li>The recordings are used only for this hiring decision and are automatically deleted after 90 days.</li>
             </ul>

@@ -15,12 +15,42 @@ const REC_STYLES = {
   borderline: 'bg-amber-500',
   no_hire: 'bg-red-500',
 };
+const COMPLETION_STYLES = {
+  pass: 'text-emerald-700 bg-emerald-50 border-emerald-200',
+  partial: 'text-amber-700 bg-amber-50 border-amber-200',
+  fail: 'text-red-700 bg-red-50 border-red-200',
+};
+const KIND_LABEL = { ai: 'AI', search: 'Search', docs: 'Docs', editor: 'Editor', other: 'Other' };
+
+function Section({ title, subtitle, children }) {
+  return (
+    <section className="rounded-xl border bg-white p-6 shadow-sm">
+      <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+      {subtitle && <p className="mt-0.5 mb-3 text-xs text-slate-400">{subtitle}</p>}
+      {!subtitle && <div className="mb-3" />}
+      {children}
+    </section>
+  );
+}
+
+function TimestampButton({ at, onSeek }) {
+  return (
+    <button
+      onClick={() => onSeek(at)}
+      className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+      title="Jump to this moment in the recordings"
+    >
+      {at}
+    </button>
+  );
+}
 
 export default function FounderReport() {
   const { attemptId } = useParams();
   const [attempt, setAttempt] = useState(null);
   const [error, setError] = useState(null);
   const videoRef = useRef(null);
+  const webcamRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,13 +81,20 @@ export default function FounderReport() {
 
   const report = attempt.report;
 
+  // Both recordings started together, so one timestamp seeks both in sync.
   function seekTo(clock) {
-    const v = videoRef.current;
-    if (!v) return;
-    v.currentTime = parseClock(clock);
-    v.play().catch(() => {});
-    v.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = parseClock(clock);
+    for (const ref of [videoRef, webcamRef]) {
+      const v = ref.current;
+      if (!v) continue;
+      v.currentTime = t;
+      v.play().catch(() => {});
+    }
+    videoRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
+
+  const integrity = report?.integrity;
+  const flagged = integrity?.status === 'flagged';
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -92,118 +129,216 @@ export default function FounderReport() {
 
         {report && (
           <>
+            {/* ── LAYER 0 — the verdict ─────────────────────────────── */}
             <section className="grid grid-cols-1 gap-4 sm:grid-cols-4">
               <div className={`rounded-xl p-5 text-white shadow-sm ${REC_STYLES[report.recommendation] || 'bg-slate-500'}`}>
                 <p className="text-xs uppercase tracking-wide opacity-80">Recommendation</p>
-                <p className="mt-1 text-2xl font-bold">{String(report.recommendation).replace('_', ' ')}</p>
+                <p className="mt-1 text-2xl font-bold">{String(report.recommendation || '—').replace('_', ' ')}</p>
               </div>
               <div className="rounded-xl border bg-white p-5 shadow-sm">
-                <p className="text-xs uppercase tracking-wide text-slate-400">AI-generated</p>
-                <p className="mt-1 text-2xl font-bold text-slate-900">{report.aiUsageBreakdown?.percentEstimatedAIGenerated}%</p>
+                <p className="text-xs uppercase tracking-wide text-slate-400">Task completed</p>
+                <p className="mt-1 text-2xl font-bold capitalize text-slate-900">{report.completion?.verdict || '—'}</p>
               </div>
               <div className="rounded-xl border bg-white p-5 shadow-sm">
                 <p className="text-xs uppercase tracking-wide text-slate-400">Own work</p>
-                <p className="mt-1 text-2xl font-bold text-slate-900">{report.aiUsageBreakdown?.percentEstimatedOwnWork}%</p>
+                <p className="mt-1 text-2xl font-bold text-slate-900">{report.toolUsage?.percentOwnWork ?? '—'}%</p>
               </div>
               <div className="rounded-xl border bg-white p-5 shadow-sm">
                 <p className="text-xs uppercase tracking-wide text-slate-400">Time used</p>
-                <p className="mt-1 text-2xl font-bold text-slate-900">{report.durationUsed} <span className="text-sm font-normal text-slate-400">/ {report.timeLimit}</span></p>
+                <p className="mt-1 text-2xl font-bold text-slate-900">
+                  {report.durationUsed} <span className="text-sm font-normal text-slate-400">/ {report.timeLimit}</span>
+                </p>
               </div>
             </section>
-
-            <section className="rounded-xl border bg-white p-6 shadow-sm">
-              <h2 className="mb-2 text-lg font-semibold text-slate-900">Summary</h2>
-              <p className="text-slate-700">{report.summary}</p>
-              {report.aiUsageBreakdown?.notes && (
-                <p className="mt-3 text-sm text-slate-500">AI usage: {report.aiUsageBreakdown.notes}</p>
-              )}
+            <section className="rounded-xl border bg-white px-6 py-4 shadow-sm">
+              <p className="text-slate-800">{report.oneLineSummary}</p>
             </section>
 
-            <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <div className="rounded-xl border bg-white p-6 shadow-sm">
-                <h2 className="mb-3 text-lg font-semibold text-slate-900">Signals</h2>
-                <dl className="space-y-2 text-sm">
-                  <div className="flex justify-between"><dt className="text-slate-500">Caught AI mistakes</dt><dd className="font-medium">{report.signals?.caughtAIMistakes ? 'Yes' : 'No'}</dd></div>
-                  <div className="flex justify-between"><dt className="text-slate-500">Understood the code</dt><dd className="font-medium">{report.signals?.understoodTheCode}</dd></div>
-                  <div className="flex justify-between"><dt className="text-slate-500">Tested own work</dt><dd className="font-medium">{report.signals?.testedOwnWork ? 'Yes' : 'No'}</dd></div>
-                  <div className="flex justify-between"><dt className="text-slate-500">Tab switches away</dt><dd className="font-medium">{report.signals?.tabSwitchCount ?? 0}</dd></div>
-                  <div className="flex justify-between"><dt className="text-slate-500">Completed the task</dt><dd className="font-medium">{report.completed ? 'Yes' : 'No'}</dd></div>
-                </dl>
-                <p className="mt-3 text-sm text-slate-600">{report.signals?.problemBreakdown}</p>
-                {report.signals?.greenFlags?.length > 0 && (
-                  <div className="mt-4">
-                    <p className="text-xs font-semibold uppercase text-emerald-600">Green flags</p>
-                    <ul className="mt-1 list-inside list-disc text-sm text-slate-700">
-                      {report.signals.greenFlags.map((f, i) => <li key={i}>{f}</li>)}
-                    </ul>
-                  </div>
-                )}
-                {report.signals?.redFlags?.length > 0 && (
-                  <div className="mt-4">
-                    <p className="text-xs font-semibold uppercase text-red-600">Red flags</p>
-                    <ul className="mt-1 list-inside list-disc text-sm text-slate-700">
-                      {report.signals.redFlags.map((f, i) => <li key={i}>{f}</li>)}
-                    </ul>
-                  </div>
-                )}
-                {report.integrity && (
-                  <div className="mt-5 border-t pt-4">
-                    <h3 className="mb-2 text-sm font-semibold text-slate-900">Proctoring &amp; integrity</h3>
-                    <dl className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <dt className="text-slate-500">Present throughout</dt>
-                        <dd className={`font-medium ${report.integrity.candidatePresentThroughout ? '' : 'text-red-600'}`}>
-                          {report.integrity.candidatePresentThroughout ? 'Yes' : 'No'}
-                        </dd>
-                      </div>
-                      <div className="flex justify-between">
-                        <dt className="text-slate-500">Someone else visible</dt>
-                        <dd className={`font-medium ${report.integrity.anotherPersonVisible ? 'text-red-600' : ''}`}>
-                          {report.integrity.anotherPersonVisible ? 'Yes' : 'No'}
-                        </dd>
-                      </div>
-                      <div className="flex justify-between">
-                        <dt className="text-slate-500">Frequently looked off-screen</dt>
-                        <dd className={`font-medium ${report.integrity.lookedAwayFrequently ? 'text-amber-600' : ''}`}>
-                          {report.integrity.lookedAwayFrequently ? 'Yes' : 'No'}
-                        </dd>
-                      </div>
-                    </dl>
-                    {report.integrity.notes && (
-                      <p className="mt-2 text-sm text-slate-600">{report.integrity.notes}</p>
-                    )}
-                  </div>
-                )}
+            {/* ── LAYER 1 — did they complete the task ─────────────── */}
+            <Section title="1 · Task completion">
+              <div className={`mb-4 inline-block rounded-full border px-3 py-1 text-sm font-semibold capitalize ${COMPLETION_STYLES[report.completion?.verdict] || 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                {report.completion?.verdict || 'unknown'}
               </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="rounded-lg bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-400">What was required</p>
+                  <p className="mt-1 text-sm text-slate-700">{report.completion?.required}</p>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-400">What was delivered</p>
+                  <p className="mt-1 text-sm text-slate-700">{report.completion?.delivered}</p>
+                </div>
+              </div>
+              <p className="mt-4 text-sm text-slate-700"><span className="font-semibold">Reasoning: </span>{report.completion?.reasoning}</p>
+              <p className="mt-2 text-sm text-slate-700"><span className="font-semibold">Output quality: </span>{report.completion?.outputQuality}</p>
+            </Section>
 
-              <div className="rounded-xl border bg-white p-6 shadow-sm">
-                <h2 className="mb-3 text-lg font-semibold text-slate-900">Session timeline</h2>
-                <p className="mb-3 text-xs text-slate-400">Click a chapter to jump to that point in the recording.</p>
-                <ol className="space-y-1">
-                  {(report.timeline || []).map((seg, i) => (
-                    <li key={i}>
-                      <button
-                        onClick={() => seekTo(seg.start)}
-                        className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-indigo-50"
-                      >
-                        <span className="font-mono text-xs text-indigo-600">{seg.start}–{seg.end}</span>
-                        <span className="ml-2 text-slate-700">{seg.label}</span>
-                      </button>
+            {/* ── LAYER 2 — session integrity ───────────────────────── */}
+            <Section
+              title="2 · Session integrity"
+              subtitle="Flags are moments to review, with a link to the exact spot in the video — never an automatic verdict."
+            >
+              <div className={`mb-4 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold ${flagged ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                {flagged ? '⚠ Flagged — review the moments below' : '✓ Clean'}
+              </div>
+              <dl className="space-y-4 text-sm">
+                <div>
+                  <dt className="font-semibold text-slate-700">Face check</dt>
+                  {integrity?.faceFlags?.length ? (
+                    <ul className="mt-1 space-y-1">
+                      {integrity.faceFlags.map((f, i) => (
+                        <li key={i} className="text-slate-700">
+                          <TimestampButton at={f.at} onSeek={seekTo} /> {f.note}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <dd className="text-slate-500">No face-related flags — candidate visible throughout the sampled frames.</dd>
+                  )}
+                </div>
+                <div>
+                  <dt className="font-semibold text-slate-700">Voice check (microphone)</dt>
+                  {integrity?.voiceFlags?.length ? (
+                    <ul className="mt-1 space-y-1">
+                      {integrity.voiceFlags.map((f, i) => (
+                        <li key={i} className="text-slate-700">
+                          <TimestampButton at={f.at} onSeek={seekTo} /> {f.note}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <dd className="text-slate-500">Microphone was silent — no audio activity above the noise floor.</dd>
+                  )}
+                </div>
+                <div>
+                  <dt className="font-semibold text-slate-700">Tab / window behavior</dt>
+                  <dd className="mt-1 text-slate-700">
+                    {integrity?.windowBehavior?.tabSwitches ?? 0} tab switch(es) inside the recorded window ·{' '}
+                    {integrity?.windowBehavior?.focusViolations ?? 0} focus escape(s) from it
+                  </dd>
+                  {integrity?.windowBehavior?.note && <dd className="mt-1 text-slate-600">{integrity.windowBehavior.note}</dd>}
+                </div>
+              </dl>
+              {integrity?.notes && <p className="mt-4 border-t pt-3 text-sm text-slate-600">{integrity.notes}</p>}
+            </Section>
+
+            {/* ── LAYER 3 — what tools, how much ───────────────────── */}
+            <Section title="3 · Tools used, and how much">
+              <div className="mb-1 flex justify-between text-sm font-medium text-slate-700">
+                <span>Own work {report.toolUsage?.percentOwnWork ?? 0}%</span>
+                <span>AI / tool-assisted {report.toolUsage?.percentAiAssisted ?? 0}%</span>
+              </div>
+              <div className="h-3 w-full overflow-hidden rounded-full bg-indigo-100">
+                <div
+                  className="h-full rounded-full bg-emerald-500"
+                  style={{ width: `${Math.min(100, Math.max(0, report.toolUsage?.percentOwnWork ?? 0))}%` }}
+                />
+              </div>
+              <table className="mt-5 w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-400">
+                    <th className="py-2 pr-4">Tool</th>
+                    <th className="py-2 pr-4">Type</th>
+                    <th className="py-2 pr-4">Time spent</th>
+                    <th className="py-2">Times opened</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(report.toolUsage?.tools || []).map((t, i) => (
+                    <tr key={i} className="border-b last:border-0">
+                      <td className="py-2 pr-4 font-medium text-slate-800">{t.name}</td>
+                      <td className="py-2 pr-4 text-slate-500">{KIND_LABEL[t.kind] || t.kind}</td>
+                      <td className="py-2 pr-4 text-slate-700">{t.minutes} min</td>
+                      <td className="py-2 text-slate-700">{t.timesOpened}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {report.toolUsage?.notes && <p className="mt-3 text-xs text-slate-500">{report.toolUsage.notes}</p>}
+            </Section>
+
+            {/* ── LAYER 4 — what each tool use was for ─────────────── */}
+            <Section
+              title="4 · What each tool use was for"
+              subtitle="The why behind every AI/tool interaction — click a timestamp to watch that moment."
+            >
+              {(report.toolPurposes || []).length === 0 ? (
+                <p className="text-sm text-slate-500">No AI/tool interactions were visible in the recording.</p>
+              ) : (
+                <ul className="space-y-2 text-sm">
+                  {report.toolPurposes.map((p, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <TimestampButton at={p.at} onSeek={seekTo} />
+                      <span className="text-slate-700">
+                        <span className="font-medium text-slate-900">{p.tool}</span> — {p.purpose}
+                      </span>
                     </li>
                   ))}
-                </ol>
+                </ul>
+              )}
+            </Section>
+
+            {/* ── LAYER 5 — depth of their own thinking ────────────── */}
+            <Section title="5 · Depth of their own thinking">
+              <p className="mb-4 text-sm">
+                <span className="text-slate-500">Overall rating: </span>
+                <span className={`font-bold uppercase ${report.thinking?.rating === 'high' ? 'text-emerald-600' : report.thinking?.rating === 'low' ? 'text-red-600' : 'text-amber-600'}`}>
+                  {report.thinking?.rating || '—'}
+                </span>
+              </p>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-emerald-600">Green flags — real understanding</p>
+                  {(report.thinking?.greenFlags || []).length === 0 ? (
+                    <p className="mt-1 text-sm text-slate-500">None observed.</p>
+                  ) : (
+                    <ul className="mt-1 list-inside list-disc space-y-1 text-sm text-slate-700">
+                      {report.thinking.greenFlags.map((f, i) => <li key={i}>{f}</li>)}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase text-red-600">Red flags — surface-level reliance</p>
+                  {(report.thinking?.redFlags || []).length === 0 ? (
+                    <p className="mt-1 text-sm text-slate-500">None observed.</p>
+                  ) : (
+                    <ul className="mt-1 list-inside list-disc space-y-1 text-sm text-slate-700">
+                      {report.thinking.redFlags.map((f, i) => <li key={i}>{f}</li>)}
+                    </ul>
+                  )}
+                </div>
               </div>
-            </section>
+              {report.thinking?.evidence && (
+                <p className="mt-4 border-t pt-3 text-sm text-slate-600">{report.thinking.evidence}</p>
+              )}
+            </Section>
+
+            {/* ── LAYER 6 — the timeline ───────────────────────────── */}
+            <Section title="6 · Session timeline" subtitle="Click a chapter to jump both recordings to that point.">
+              <ol className="space-y-1">
+                {(report.timeline || []).map((seg, i) => (
+                  <li key={i}>
+                    <button
+                      onClick={() => seekTo(seg.start)}
+                      className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-indigo-50"
+                    >
+                      <span className="font-mono text-xs text-indigo-600">{seg.start}–{seg.end}</span>
+                      <span className="ml-2 text-slate-700">{seg.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </Section>
           </>
         )}
 
+        {/* ── LAYER 7 — the full session video ─────────────────────── */}
         {(attempt.hasVideo || attempt.hasWebcam) && (
-          <section className="rounded-xl border bg-white p-6 shadow-sm">
-            <h2 className="mb-3 text-lg font-semibold text-slate-900">Session recording</h2>
+          <Section title="7 · Full session recording" subtitle="The receipts — everything above is a summary of what's in here.">
             <div className={`grid grid-cols-1 gap-4 ${attempt.hasVideo && attempt.hasWebcam ? 'lg:grid-cols-3' : ''}`}>
               {attempt.hasVideo && (
                 <div className={attempt.hasWebcam ? 'lg:col-span-2' : ''}>
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Assessment tab</p>
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Browser window</p>
                   <video
                     ref={videoRef}
                     controls
@@ -217,6 +352,7 @@ export default function FounderReport() {
                 <div>
                   <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Webcam (with microphone audio)</p>
                   <video
+                    ref={webcamRef}
                     controls
                     preload="metadata"
                     src={`/api/attempts/${attemptId}/webcam-video`}
@@ -225,7 +361,7 @@ export default function FounderReport() {
                 </div>
               )}
             </div>
-          </section>
+          </Section>
         )}
       </main>
     </div>

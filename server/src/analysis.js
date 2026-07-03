@@ -147,6 +147,59 @@ const extractWebcamFrames = (dir) =>
     maxWidth: 640,
   });
 
+// Scans the microphone track for audible segments using ffmpeg silencedetect.
+// The model can't hear audio — these timestamped segments become voice-check
+// pointers the founder can click and listen to.
+export async function detectAudioActivity(dir) {
+  const video = ['webcam-fixed.webm', 'webcam.webm']
+    .map((f) => path.join(dir, f))
+    .find((f) => fs.existsSync(f));
+  if (!video) return { available: false, segments: [] };
+
+  const ffmpeg = await resolveFfmpeg();
+  let stderr;
+  try {
+    ({ stderr } = await execFileAsync(
+      ffmpeg,
+      ['-i', video, '-vn', '-af', 'silencedetect=noise=-35dB:d=1.5', '-f', 'null', '-'],
+      { timeout: 300_000, maxBuffer: 32 * 1024 * 1024 },
+    ));
+  } catch (err) {
+    console.error('Audio activity scan failed:', err.message);
+    return { available: false, segments: [] };
+  }
+
+  const durMatch = stderr.match(/Duration: (\d+):(\d+):(\d+\.?\d*)/);
+  const duration = durMatch
+    ? Number(durMatch[1]) * 3600 + Number(durMatch[2]) * 60 + Number(durMatch[3])
+    : null;
+  const hasAudioStream = /Stream #.*Audio/.test(stderr);
+  if (!hasAudioStream || duration === null) return { available: false, segments: [] };
+
+  // silencedetect reports the silent stretches; sound is everything between.
+  const silences = [];
+  let currentStart = null;
+  for (const line of stderr.split('\n')) {
+    const s = line.match(/silence_start: (\d+\.?\d*)/);
+    const e = line.match(/silence_end: (\d+\.?\d*)/);
+    if (s) currentStart = Number(s[1]);
+    if (e && currentStart !== null) {
+      silences.push([currentStart, Number(e[1])]);
+      currentStart = null;
+    }
+  }
+  if (currentStart !== null) silences.push([currentStart, duration]);
+
+  const segments = [];
+  let cursor = 0;
+  for (const [s, e] of silences) {
+    if (s - cursor >= 1) segments.push({ start: cursor, end: s });
+    cursor = Math.max(cursor, e);
+  }
+  if (duration - cursor >= 1) segments.push({ start: cursor, end: duration });
+  return { available: true, segments };
+}
+
 function formatClock(totalSeconds) {
   const s = Math.max(0, Math.round(totalSeconds));
   const m = Math.floor(s / 60);
@@ -191,7 +244,7 @@ function formatEventLog(events) {
     .join('\n');
 }
 
-function buildUserContent({ task, attempt, frames, webcamFrames, events, finalCode }) {
+function buildUserContent({ task, attempt, frames, webcamFrames, audio, events, finalCode }) {
   const content = [];
   content.push({
     type: 'text',
@@ -206,8 +259,15 @@ function buildUserContent({ task, attempt, frames, webcamFrames, events, finalCo
       .join('\n'),
   });
 
-  for (const frame of frames) {
-    content.push({ type: 'text', text: `Screenshot at ${formatClock(frame.seconds)}:` });
+  // Interleave screen and webcam frames chronologically so the model sees
+  // what was on screen and who was at the keyboard at the same moments.
+  const merged = [
+    ...frames.map((f) => ({ ...f, kind: 'SCREEN (recorded browser window)' })),
+    ...webcamFrames.map((f) => ({ ...f, kind: 'WEBCAM (candidate-facing camera)' })),
+  ].sort((a, b) => a.seconds - b.seconds || (a.kind < b.kind ? -1 : 1));
+
+  for (const frame of merged) {
+    content.push({ type: 'text', text: `${frame.kind} at ${formatClock(frame.seconds)}:` });
     content.push({
       type: 'image',
       source: {
@@ -220,25 +280,34 @@ function buildUserContent({ task, attempt, frames, webcamFrames, events, finalCo
   if (frames.length === 0) {
     content.push({
       type: 'text',
-      text: '(No screen recording frames are available for this session — base your analysis on the event log and final submission only, and note the missing video in your report.)',
-    });
-  }
-
-  for (const frame of webcamFrames) {
-    content.push({ type: 'text', text: `WEBCAM (candidate-facing camera) at ${formatClock(frame.seconds)}:` });
-    content.push({
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: 'image/jpeg',
-        data: fs.readFileSync(frame.file).toString('base64'),
-      },
+      text: '(No screen recording frames are available for this session — base your analysis on the event log and final submission only, and note the missing recording in the relevant sections.)',
     });
   }
   if (webcamFrames.length === 0) {
     content.push({
       type: 'text',
       text: '(No webcam frames are available for this session — note in the integrity section that webcam-based checks could not be performed.)',
+    });
+  }
+
+  if (!audio?.available) {
+    content.push({
+      type: 'text',
+      text: 'MICROPHONE AUDIO ACTIVITY: no usable audio track — voice checks could not be performed; say so in the integrity notes.',
+    });
+  } else if (audio.segments.length === 0) {
+    content.push({
+      type: 'text',
+      text: 'MICROPHONE AUDIO ACTIVITY: the microphone was essentially silent for the entire session (no segments above the noise floor). voiceFlags should be empty.',
+    });
+  } else {
+    content.push({
+      type: 'text',
+      text:
+        'MICROPHONE AUDIO ACTIVITY (sound detected in these windows — you cannot hear the content; flag each as a listen-here pointer):\n' +
+        audio.segments
+          .map((s) => `${formatClock(s.start)}–${formatClock(s.end)} (${Math.round(s.end - s.start)}s of sound)`)
+          .join('\n'),
     });
   }
 
@@ -253,37 +322,62 @@ function buildUserContent({ task, attempt, frames, webcamFrames, events, finalCo
   return content;
 }
 
-function mockReport(events, finalCode) {
+function mockReport(events, finalCode, audio) {
   const pasted = events.filter((e) => e.type === 'paste').reduce((n, e) => n + (e.chars || 0), 0);
   const typed = events.filter((e) => e.type === 'typing').reduce((n, e) => n + (e.chars || 0), 0);
-  const tabOuts = events.filter((e) => e.type === 'left_assessment_tab' || e.type === 'focus_left_window').length;
+  const tabSwitches = events.filter((e) => e.type === 'left_assessment_tab').length;
+  const violations = events.filter((e) => e.type === 'focus_left_window').length;
   const total = pasted + typed || 1;
   const aiPct = Math.min(100, Math.round((pasted / total) * 100));
+  const voiceFlags = (audio?.segments || []).map((s) => ({
+    at: formatClock(s.start),
+    note: `Sound detected for ${Math.round(s.end - s.start)}s — listen at this moment.`,
+  }));
   return {
-    aiUsageBreakdown: {
-      percentEstimatedAIGenerated: aiPct,
-      percentEstimatedOwnWork: 100 - aiPct,
-      notes: `MOCK REPORT (no LLM call was made). Estimated from the event log: ~${pasted} chars pasted vs ~${typed} chars typed.`,
-    },
-    timeline: [{ start: '0:00', end: '0:00', label: 'Mock analysis — timeline unavailable without LLM analysis' }],
-    signals: {
-      caughtAIMistakes: false,
-      understoodTheCode: 'unclear',
-      problemBreakdown: 'unclear — mock analysis',
-      testedOwnWork: false,
-      tabSwitchCount: tabOuts,
-      redFlags: [],
-      greenFlags: [],
+    oneLineSummary:
+      'MOCK REPORT (no LLM call was made) — set ANTHROPIC_API_KEY and unset MOCK_ANALYSIS for a real analysis.',
+    recommendation: 'borderline',
+    completion: {
+      verdict: finalCode && finalCode.trim() ? 'partial' : 'fail',
+      required: 'Mock analysis — the brief was not evaluated.',
+      delivered: finalCode && finalCode.trim() ? 'A non-empty submission was received.' : 'Empty submission.',
+      reasoning: 'Mock analysis cannot judge requirements.',
+      outputQuality: 'Not evaluated in mock mode.',
     },
     integrity: {
-      candidatePresentThroughout: true,
-      anotherPersonVisible: false,
-      lookedAwayFrequently: false,
-      notes: 'Mock analysis — webcam frames were not reviewed.',
+      status: voiceFlags.length > 0 || violations > 0 ? 'flagged' : 'clean',
+      faceFlags: [],
+      voiceFlags,
+      windowBehavior: {
+        tabSwitches,
+        focusViolations: violations,
+        note: `Event log: ${tabSwitches} in-window tab switch(es), ${violations} focus escape(s). Frames not reviewed in mock mode.`,
+      },
+      notes: 'Mock analysis — webcam frames were not reviewed. Audio segments (if any) come from the real microphone scan.',
     },
-    completed: Boolean(finalCode && finalCode.trim()),
-    summary: 'This is a mock report generated without calling the Claude API (set ANTHROPIC_API_KEY and unset MOCK_ANALYSIS for a real analysis).',
-    recommendation: 'borderline',
+    toolUsage: {
+      percentOwnWork: 100 - aiPct,
+      percentAiAssisted: aiPct,
+      tools: [
+        { name: 'Own typing/editing', kind: 'editor', minutes: 0, timesOpened: 1 },
+        ...(pasted > 0 ? [{ name: 'Unknown source (pasted content)', kind: 'other', minutes: 0, timesOpened: events.filter((e) => e.type === 'paste').length }] : []),
+      ],
+      notes: `Estimated from the event log alone: ~${pasted} chars pasted vs ~${typed} chars typed.`,
+    },
+    toolPurposes: events
+      .filter((e) => e.type === 'paste')
+      .map((e) => ({
+        at: formatClock((e.t ?? 0) / 1000),
+        tool: 'Unknown source',
+        purpose: `Pasted ${e.chars} characters into the editor.`,
+      })),
+    thinking: {
+      rating: 'medium',
+      greenFlags: [],
+      redFlags: [],
+      evidence: 'Mock analysis — frames were not reviewed, so no thinking-depth evidence is available.',
+    },
+    timeline: [{ start: '0:00', end: '0:00', label: 'Mock analysis — timeline unavailable without LLM analysis' }],
   };
 }
 
@@ -300,10 +394,11 @@ async function analyzeAttempt(attemptId) {
   const events = readEvents(dir);
   const finalCodePath = path.join(dir, 'final-code.txt');
   const finalCode = fs.existsSync(finalCodePath) ? fs.readFileSync(finalCodePath, 'utf8') : '';
+  const audio = await detectAudioActivity(dir);
 
   let report;
   if (process.env.MOCK_ANALYSIS) {
-    report = mockReport(events, finalCode);
+    report = mockReport(events, finalCode, audio);
   } else {
     if (!process.env.ANTHROPIC_API_KEY) {
       throw new Error('ANTHROPIC_API_KEY is not set. Set it (or MOCK_ANALYSIS=1 for a stub report) and the job will retry on restart.');
@@ -328,7 +423,7 @@ async function analyzeAttempt(attemptId) {
       thinking: { type: 'adaptive' },
       system: ANALYSIS_SYSTEM_PROMPT,
       output_config: { format: { type: 'json_schema', schema: reportSchema } },
-      messages: [{ role: 'user', content: buildUserContent({ task, attempt, frames, webcamFrames, events, finalCode }) }],
+      messages: [{ role: 'user', content: buildUserContent({ task, attempt, frames, webcamFrames, audio, events, finalCode }) }],
     });
     const message = await stream.finalMessage();
     if (message.stop_reason === 'refusal') {

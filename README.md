@@ -5,12 +5,23 @@ window-locked** browser session: their entire browser window (every tab in it �
 AI tools included), their webcam, and their microphone are recorded. The share
 is verified to be the right window, every paste and tab-switch is logged, and
 moving focus to another window or app three times ends the attempt. Afterwards
-an async analysis job samples frames from both recordings, combines them with
-the editor's event log and the final submission, and asks Claude for an
-evidence-based report: how much was AI-generated vs their own work (including
-what they actually asked the AI, visible in the frames), a session timeline,
-integrity checks (present, alone, looking at the screen, no unrecorded
-off-window work), red/green flags, and a hire recommendation.
+an async analysis job samples frames from both recordings (time-interleaved,
+so the screen and the face are judged at the same moments), scans the
+microphone track for voices, and asks Claude for a layered, evidence-based
+founder report:
+
+0. **Verdict** — recommendation, completion, time used, one-line summary
+1. **Task completion** — required vs delivered, reasoning, output quality
+2. **Session integrity** — face flags, voice flags, and window behavior, each
+   with a clickable timestamp into the recordings; flags are pointers for the
+   founder to review, never an automatic cheating verdict
+3. **Tools used & how much** — own-work vs assisted split, plus a per-tool
+   table (which AI, which tools, minutes, times opened)
+4. **What each tool use was for** — timestamped purposes read from the frames
+5. **Depth of their own thinking** — evidence-backed green/red flags + rating
+6. **Timeline** — clickable chapters that seek both videos in sync
+7. **Full recordings** — browser window + webcam with microphone audio
+8. **Candidate comparison** — a sortable table across all attempts on a task
 
 ## Stack
 
@@ -21,9 +32,11 @@ off-window work), red/green flags, and a hire recommendation.
   session).
 - **Server** — Node + Express, JSON-file storage under `server/data/`, in-process
   analysis queue.
-- **Analysis** — `ffmpeg` frame sampling of the tab recording (1 frame / 8s, ≤40
-  frames) and the webcam recording (1 frame / 20s, ≤15 frames) + event log +
-  final code → Claude (`claude-opus-4-8`) with a strict JSON report schema.
+- **Analysis** — `ffmpeg` frame sampling of the window recording (1 frame / 8s,
+  ≤40 frames) and the webcam recording (1 frame / 20s, ≤15 frames),
+  time-interleaved; `ffmpeg silencedetect` voice-activity scan of the mic
+  track; event log + final code → Claude (`claude-opus-4-8`) with a strict
+  JSON schema for the layered report.
 
 ## Run it
 

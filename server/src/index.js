@@ -56,9 +56,23 @@ app.get('/api/tasks/:id/attempts', (req, res) => {
   const list = Object.values(attempts)
     .filter((a) => a.taskId === task.id)
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-    .map(({ id, candidateName, status, createdAt, submittedAt, durationSeconds }) => ({
-      id, candidateName, status, createdAt, submittedAt, durationSeconds,
-    }));
+    .map(({ id, candidateName, status, createdAt, submittedAt, durationSeconds }) => {
+      const row = { id, candidateName, status, createdAt, submittedAt, durationSeconds };
+      // Comparison-table summary for completed attempts.
+      if (status === 'complete') {
+        try {
+          const r = JSON.parse(fs.readFileSync(path.join(attemptDir(id), 'report.json'), 'utf8'));
+          row.summary = {
+            recommendation: r.recommendation,
+            completion: r.completion?.verdict,
+            percentOwnWork: r.toolUsage?.percentOwnWork,
+            thinkingRating: r.thinking?.rating,
+            integrityStatus: r.integrity?.status,
+          };
+        } catch { /* report unreadable — row stays bare */ }
+      }
+      return row;
+    });
   res.json(list);
 });
 
